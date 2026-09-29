@@ -2,7 +2,8 @@
 // and lays it out in the layout worker on request. Throwaway UI; the real app
 // comes in M3.
 
-import type { Dimension, LayoutResult, ValidationResult } from "@crochet-model/core";
+import type { Dimension, StitchGraph, ValidationResult } from "@crochet-model/core";
+import { StructureView, type ColorMode } from "./view/structureView.ts";
 import { LayoutCancelled, LayoutClient, ParserClient } from "./workers/clients.ts";
 
 const EXAMPLES: Record<string, string> = {
@@ -26,39 +27,69 @@ const progressEl = $<HTMLProgressElement>("progress");
 const layoutInfo = $("layoutInfo");
 const seedInput = $<HTMLInputElement>("seed");
 const iterationsInput = $<HTMLInputElement>("iterations");
-const rotateInput = $<HTMLInputElement>("rotate");
-const plot = document.getElementById("plot") as unknown as SVGSVGElement;
+const colorSelect = $<HTMLSelectElement>("colorMode");
+const internalInput = $<HTMLInputElement>("internal");
+const fitButton = $<HTMLButtonElement>("fit");
+const tooltip = $("tooltip");
 
 const parser = new ParserClient();
 const layoutClient = new LayoutClient();
 
 let latest: ValidationResult | undefined;
-let lastLayout: LayoutResult | undefined;
-let edges: { tail: string; head: string; attach: boolean }[] = [];
+let latestGraph: StitchGraph | undefined;
 let validateSeq = 0;
 
-for (const name of Object.keys(EXAMPLES)) exampleSelect.add(new Option(name, name));
+const view = new StructureView($("view"));
+view.onHover = (info) => {
+  tooltip.hidden = !info;
+  if (!info) return;
+  const s = info.stitch;
+  tooltip.textContent = `${s.type} · row ${s.row}, #${s.index}${s.side ? ` · ${s.side}` : ""}${
+    s.workedInto.length ? ` · into ${s.workedInto.map((id) => id.split("|")[0]).join(" + ")}` : ""
+  }${s.intoSpace ? " (space)" : ""}`;
+  const box = $("view").getBoundingClientRect();
+  tooltip.style.left = `${info.x - box.left + 12}px`;
+  tooltip.style.top = `${info.y - box.top + 12}px`;
+};
+colorSelect.addEventListener("change", () => view.setOptions({ colorMode: colorSelect.value as ColorMode }));
+internalInput.addEventListener("change", () => view.setOptions({ showInternal: internalInput.checked }));
+fitButton.addEventListener("click", () => view.fit());
+
+const exampleGroup = document.createElement("optgroup");
+exampleGroup.label = "M0";
+for (const name of Object.keys(EXAMPLES)) exampleGroup.append(new Option(name, name));
+exampleSelect.append(exampleGroup);
 pattern.value = EXAMPLES["Amigurumi ball"]!;
+
+// The examples bundled in parse64.js, as `var textName = \`…\`;` globals.
+void import("../../../vendor/crochetparade/parse64.js?raw").then(({ default: source }) => {
+  const group = document.createElement("optgroup");
+  group.label = "CrochetPARADE examples";
+  for (const m of source.matchAll(/^var (text[A-Z]\w*)\s*=\s*`([^`]*)`/gm)) {
+    const name = m[1]!.slice(4);
+    // Evaluate the literal, so escapes such as `\\` mean what they do in the parser.
+    EXAMPLES[name] = new Function(`return \`${m[2]}\`;`)() as string;
+    group.append(new Option(name, name));
+  }
+  exampleSelect.append(group);
+});
 
 const dimension = () => Number(dimensionSelect.value) as Dimension;
 
 async function validateNow() {
   const seq = ++validateSeq;
-  const { result, ms } = await parser.validate(pattern.value, { dimension: dimension() });
+  // Until this pattern is checked, Lay out would use the previous one.
+  layoutButton.disabled = true;
+  const { result, graph, ms } = await parser.validate(pattern.value, { dimension: dimension(), withGraph: true });
   if (seq !== validateSeq) return; // a newer edit is on its way
   latest = result;
+  latestGraph = graph;
   parseTimeEl.textContent = `${ms.toFixed(1)} ms in worker`;
   layoutButton.disabled = !result.ok;
   if (result.ok) {
     statusEl.textContent = "valid";
     statusEl.className = "ok";
     messageEl.textContent = result.warnings.join(" · ");
-    const graph = JSON.parse(result.graphJson!) as {
-      elements: { type: string; tail?: string; head?: string; color?: string }[];
-    };
-    edges = graph.elements
-      .filter((e) => e.type === "edge")
-      .map((e) => ({ tail: e.tail!, head: e.head!, attach: e.color === "red" }));
   } else {
     const e = result.error!;
     statusEl.textContent = `invalid: ${e.kind}`;
@@ -83,13 +114,15 @@ pattern.addEventListener("input", () => {
 });
 exampleSelect.addEventListener("change", () => {
   pattern.value = EXAMPLES[exampleSelect.value]!;
-  if (exampleSelect.value.includes("2D")) dimensionSelect.value = "2";
+  // CrochetPARADE's examples choose their own look; M0's flat swatch is 2D.
+  dimensionSelect.value = exampleSelect.value.includes("2D") ? "2" : "3";
   validateNow();
 });
 dimensionSelect.addEventListener("change", validateNow);
 
 layoutButton.addEventListener("click", async () => {
-  if (!latest?.ok) return;
+  if (!latest?.ok || !latestGraph) return;
+  const graph = latestGraph;
   cancelButton.disabled = false;
   layoutButton.disabled = true;
   progressEl.value = 0;
@@ -104,10 +137,10 @@ layoutButton.addEventListener("click", async () => {
   );
   cancelButton.onclick = () => job.cancel();
   try {
-    lastLayout = await job.promise;
+    const result = await job.promise;
     progressEl.value = 1;
-    layoutInfo.textContent = `${Object.keys(lastLayout.positions).length} nodes in ${lastLayout.ms} ms, ${lastLayout.attempts} attempt(s), final error ${lastLayout.finalError?.toFixed(3)}`;
-    draw();
+    layoutInfo.textContent = `${graph.stitches.length} stitches, ${Object.keys(result.positions).length} nodes in ${result.ms} ms, ${result.attempts} attempt(s), final error ${result.finalError?.toFixed(3)}`;
+    view.setModel(graph, result);
   } catch (error) {
     layoutInfo.textContent = error instanceof LayoutCancelled ? "cancelled" : `failed: ${(error as Error).message}`;
   } finally {
@@ -115,42 +148,5 @@ layoutButton.addEventListener("click", async () => {
     layoutButton.disabled = !latest?.ok;
   }
 });
-
-rotateInput.addEventListener("input", draw);
-
-/** Orthographic projection after rotating about the vertical axis. */
-function draw() {
-  plot.replaceChildren();
-  if (!lastLayout) return;
-  const angle = (Number(rotateInput.value) * Math.PI) / 180;
-  const project = ([x = 0, y = 0, z = 0]: number[]): [number, number] =>
-    lastLayout!.dimension === 2 ? [x, y] : [x * Math.cos(angle) + z * Math.sin(angle), y];
-  const points = new Map<string, [number, number]>();
-  for (const [name, p] of Object.entries(lastLayout.positions)) points.set(name, project(p));
-  const xs = [...points.values()].map((p) => p[0]);
-  const ys = [...points.values()].map((p) => p[1]);
-  const pad = 1;
-  const minX = Math.min(...xs) - pad, maxX = Math.max(...xs) + pad;
-  const minY = Math.min(...ys) - pad, maxY = Math.max(...ys) + pad;
-  plot.setAttribute("viewBox", `${minX} ${-maxY} ${maxX - minX} ${maxY - minY}`);
-  const ns = "http://www.w3.org/2000/svg";
-  for (const e of edges) {
-    const a = points.get(e.tail), b = points.get(e.head);
-    if (!a || !b) continue;
-    const line = document.createElementNS(ns, "line");
-    line.setAttribute("x1", String(a[0])); line.setAttribute("y1", String(-a[1]));
-    line.setAttribute("x2", String(b[0])); line.setAttribute("y2", String(-b[1]));
-    line.setAttribute("class", e.attach ? "attach" : "yarn");
-    line.setAttribute("stroke-width", "0.06");
-    plot.append(line);
-  }
-  for (const [name, [x, y]] of points) {
-    if (!/^\d+,\d+\|\d+$/.test(name)) continue; // top nodes only
-    const dot = document.createElementNS(ns, "circle");
-    dot.setAttribute("cx", String(x)); dot.setAttribute("cy", String(-y));
-    dot.setAttribute("r", "0.09"); dot.setAttribute("class", "node");
-    plot.append(dot);
-  }
-}
 
 validateNow();

@@ -49,10 +49,10 @@
       th { color: var(--muted); font-weight: 500; }
       .muted { color: var(--muted); }
       progress { width: 160px; }
-      #plot { width: 100%; height: min(70vh, 640px); border: 1px solid var(--line); border-radius: 6px; }
-      #plot .yarn { stroke: var(--yarn); }
-      #plot .attach { stroke: var(--attach); }
-      #plot .node { fill: var(--node); }
+      #view { position: relative; width: 100%; height: min(72vh, 680px); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+      #view canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+      #tooltip { position: absolute; pointer-events: none; background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 2px 6px; font-size: 12px; white-space: nowrap; }
+      .key { display: inline-block; width: 10px; height: 10px; border-radius: 50%; vertical-align: -1px; margin: 0 2px 0 6px; }
     </style>
   </head>
   <body>
@@ -82,10 +82,22 @@
           <span id="layoutInfo" class="muted"></span>
         </div>
         <div class="controls">
-          <label>rotate <input id="rotate" type="range" min="0" max="360" value="30" /></label>
-          <span class="muted">blue: yarn from stitch to stitch · red: worked into</span>
+          <label>colour
+            <select id="colorMode">
+              <option value="yarn">yarn</option>
+              <option value="type">stitch type</option>
+            </select>
+          </label>
+          <label><input id="internal" type="checkbox" /> internal nodes</label>
+          <button id="fit">Fit</button>
+          <span class="muted">
+            <span class="key" style="background: var(--yarn)"></span>yarn
+            <span class="key" style="background: var(--attach)"></span>worked into
+            <span class="key" style="background: #ff3fd2"></span>hovered
+            <span class="key" style="background: #2fbf71"></span>its base
+          </span>
         </div>
-        <svg id="plot" role="img" aria-label="Layout projection"></svg>
+        <div id="view"><div id="tooltip" hidden></div></div>
       </section>
     </main>
     <script type="module" src="/src/main.ts"></script>

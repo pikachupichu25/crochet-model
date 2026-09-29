@@ -5,16 +5,23 @@ import type {
   LayoutProgress,
   LayoutResult,
   SolverSettings,
+  StitchGraph,
   ValidationResult,
 } from "@crochet-model/core";
 import type { LayoutResponse, ParserResponse } from "./protocol.ts";
+
+export interface ParseOutcome {
+  result: ValidationResult;
+  graph?: StitchGraph;
+  ms: number;
+}
 
 export class ParserClient {
   private worker = new Worker(new URL("./parser.worker.ts", import.meta.url), { type: "module" });
   private nextId = 1;
   private pending = new Map<
     number,
-    { resolve: (value: { result: ValidationResult; ms: number }) => void; reject: (e: Error) => void }
+    { resolve: (value: ParseOutcome) => void; reject: (e: Error) => void }
   >();
 
   constructor() {
@@ -23,15 +30,16 @@ export class ParserClient {
       const waiter = this.pending.get(message.id);
       if (!waiter) return;
       this.pending.delete(message.id);
-      if (message.type === "result") waiter.resolve({ result: message.result, ms: message.ms });
-      else waiter.reject(new Error(message.message));
+      if (message.type === "result") {
+        waiter.resolve({ result: message.result, graph: message.graph, ms: message.ms });
+      } else waiter.reject(new Error(message.message));
     };
   }
 
   validate(
     text: string,
     options: { dimension?: Dimension; withGraph?: boolean } = {},
-  ): Promise<{ result: ValidationResult; ms: number }> {
+  ): Promise<ParseOutcome> {
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
@@ -56,11 +64,20 @@ export interface LayoutJob {
  * Runs one layout at a time. Starting a new layout cancels the running one.
  * Cancelling terminates the worker; the next layout starts a fresh one, which
  * reloads the solver (a few milliseconds plus the wasm fetch).
+ *
+ * The solver never frees its result buffer, and wasm memory does not shrink,
+ * so the worker is also replaced after `recycleAfter` finished layouts.
  */
 export class LayoutClient {
   private worker: Worker | undefined;
   private nextId = 1;
   private current: { id: number; reject: (e: Error) => void } | undefined;
+  private finished = 0;
+  private readonly recycleAfter: number;
+
+  constructor(recycleAfter = 50) {
+    this.recycleAfter = recycleAfter;
+  }
 
   layout(
     simpleDot: string,
@@ -80,6 +97,7 @@ export class LayoutClient {
           return;
         }
         this.current = undefined;
+        if (++this.finished >= this.recycleAfter) this.retire();
         if (message.type === "result") resolve(message.result);
         else reject(new Error(message.message));
       };
@@ -90,11 +108,16 @@ export class LayoutClient {
 
   cancel(): void {
     if (!this.current) return;
-    this.worker?.terminate();
-    this.worker = undefined;
+    this.retire();
     const { reject } = this.current;
     this.current = undefined;
     reject(new LayoutCancelled());
+  }
+
+  private retire(): void {
+    this.worker?.terminate();
+    this.worker = undefined;
+    this.finished = 0;
   }
 
   private spawn(): Worker {

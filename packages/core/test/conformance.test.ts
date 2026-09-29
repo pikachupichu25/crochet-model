@@ -2,6 +2,7 @@
 // vendored parser (SPEC.md §10.2). Run after every vendor upgrade.
 
 import { describe, expect, it } from "vitest";
+import { parseStitchGraph } from "../src/cp/graph.ts";
 import {
   bundledExamples,
   createNodeValidator,
@@ -18,6 +19,9 @@ const KNOWN_FAILURES: Record<string, string> = {
 // `npm run test:conformance`.
 const SLOW = new Set(["textDoily", "textChevron"]);
 const runSlow = process.env.CP_SLOW === "1";
+
+// Stitch types that need not be worked into anything.
+const FOUNDATION = new Set(["ch", "ring", "hidden"]);
 
 const examples = bundledExamples();
 const { validate } = createNodeValidator();
@@ -37,6 +41,23 @@ describe("bundled CrochetPARADE examples", () => {
       }
       expect(result.error?.message).toBeUndefined();
       expect(result.rows.length).toBeGreaterThan(0);
+
+      // The StitchGraph round-trips: same stitches per row as the row
+      // summary, every edge end is a node, and every stitch that is not a
+      // foundation is worked into something.
+      const graph = parseStitchGraph(result.graphJson!);
+      const perRow = result.rows.map((r) =>
+        Object.values(r.byType).reduce((a, b) => a + b, 0),
+      );
+      const graphPerRow = perRow.map(() => 0);
+      for (const s of graph.stitches) graphPerRow[s.row]! += 1;
+      expect(graphPerRow).toEqual(perRow);
+      const ids = new Set(graph.nodes.map((n) => n.id));
+      expect(graph.edges.filter((e) => !ids.has(e.tail) || !ids.has(e.head))).toEqual([]);
+      const unattached = graph.stitches.filter(
+        (s) => !FOUNDATION.has(s.type) && s.workedInto.length === 0,
+      );
+      expect(unattached.map((s) => `${s.id} ${s.type}`)).toEqual([]);
     });
   }
 });

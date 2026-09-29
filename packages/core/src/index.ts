@@ -32,4 +32,12 @@ export {
   type SolverLoader,
   type SolverSettings,
 } from "./cp/layout.ts";
+export {
+  parseStitchGraph,
+  type EdgeKind,
+  type GraphEdge,
+  type GraphNode,
+  type Stitch,
+  type StitchGraph,
+} from "./cp/graph.ts";
 export { mapRowsToLines } from "./cp/sourceLines.ts";

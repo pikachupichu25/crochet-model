@@ -114,27 +114,39 @@ What M0 established about the parser (vendored commit `06e987b`):
 
 ### 3.3 Stitch graph
 
-`graphJson` (and, where simpler, `simpleDot`) is parsed into a typed graph. Nodes carry `name` (`row,index|statement`, with letter-suffixed internal nodes), `label` (`type|context|colour`) and `attachmentLabel` (labels defined on the stitch). Edges carry `tail`, `head`, `len` (rest length) and `color`: blue for the yarn running from stitch to stitch, red for the attachment to the stitch worked into. It feeds the structure comparison (§7.3), the review UI's row ↔ stitch links (FR-3.2) and the renderer (§6).
+**Status: built (M0).** Code: `packages/core/src/cp/graph.ts` (`parseStitchGraph`). The parser worker parses the graph and sends it instead of `graphJson`, whose labels carry megabytes of HTML context. It feeds the structure comparison (§7.3), the review UI's row ↔ stitch links (FR-3.2) and the renderer (§6).
 
 ```ts
 interface StitchGraph {
-  stitches: Stitch[];           // in working order
-  edges: GraphEdge[];           // from the full DOT: node pairs with rest lengths
-  nodes: GraphNode[];           // top nodes, bottom nodes, hidden nodes
+  stitches: Stitch[];           // top nodes, in working order
+  edges: GraphEdge[];           // { tail, head, len, kind: "yarn" | "structure" | "constraint", color? }
+  nodes: GraphNode[];           // { id, type, top, statement?, hidden }: every node, deduplicated
 }
 
 interface Stitch {
-  id: string;                   // CrochetPARADE's node id, e.g. "3,12"
+  id: string;                   // the node name, e.g. "3,12|40"
   row: number;                  // 0-based, as CrochetPARADE counts
   index: number;                // position within its row
-  type: string;                 // "sc", "dc2tog", "ch", or a DEF: name
+  statement: number;            // statement uid; a sc2inc gives two stitches one statement
+  type: string;                 // "sc", "ch", "scbl", or a DEF: name; a dc2tog is "dc"
   workedInto: string[];         // ids of the stitches it attaches to
-  nodeIds: string[];            // its nodes in the full graph
-  color?: string;
+  intoSpace: boolean;           // attaches into a chain space or post, not a stitch's top
+  side?: "back" | "front";      // back/front loop and post stitches
+  nodeIds: string[];            // its top node, then its statement's internal nodes
+  labels: string[];             // labels defined on it
+  color?: string;               // the COLOR: in effect, as written ("Red", "#969696")
 }
 ```
 
-**Remaining spike (M0):** confirm the node and edge format against `export_to_dot` in `parse64.js` (the notes above come from probing outputs, not from reading that function), including how multi-top stitches, loop-only and post stitches, and `start_anew` objects appear.
+What M0 established by reading `export_to_dot` in `parse64.js` and probing all bundled examples:
+
+- **Statements and top nodes.** Every stitch statement gets a uid (the number after `|`); `sk` takes one and makes no node, so uids have gaps. A statement has zero or more top nodes, named `row,index|uid`: a sc2inc has two, a picot3 four (`ch`, `ch`, `ch`, `ss`), a dc2tog one. The label is `type|context|colour`, where context is HTML. A `start_anew` is a top node of type `hidden`, and no yarn edge runs into it.
+- **Internal nodes** are named `row,index<X>|uid`, with row,index from the statement's first top node and X the letter from the stitch definition, sometimes with a digit (`2,6C|6`, `3,0C0|138`). Puffs, bobbles and popcorns use them, and so do stitches worked into a chain space (a hidden `B` node). Custom `DEF:` stitches can give them other types (`line`, `dc`).
+- **Loop and post stitches** insert a hidden node named `<target>a<head>_jacobian<j>` between the stitch worked into and the stitch's node; j > 0 is the back loop or back post, j < 0 the front. The solver input adds a matching orientation quadruple.
+- **Space interpolation.** An attachment between two points of a post can create a hidden node named `$<p0>--<p1>:<d0>:<d1>|<uids>`, which can be emitted more than once. None of the bundled examples produce one; nodes are deduplicated by name anyway.
+- **Edge colours.** Blue is the yarn from stitch to stitch; at most one blue edge enters a node. Red is structure: the attachment to the stitch worked into, and springs inside a stitch. Gray places a hidden node, such as the point in a chain space between two stitches. The first stitch of a turned row has both a blue and a red edge from the last stitch of the row before, because it is worked into it.
+- **Worked into** is found by walking back from the top node over red and gray edges, through the statement's own internal nodes, jacobian and `$` nodes, until other stitches are reached. At an internal node fed by other internal nodes, only those are followed: a popcorn ties the previous stitch to one of its internal nodes (`!-0.33-D`), and that is not an attachment. A path through a gray edge sets `intoSpace`.
+- **Conformance** (§10.2) checks, for every bundled example, that the graph has the same stitches per row as the row summary, that every edge end is a node, and that every stitch other than `ch`, `ring` and `hidden` is worked into something. All pass; no chain is ever worked into anything.
 
 ### 3.4 Layout
 
@@ -148,7 +160,8 @@ What M0 established:
 - **Progress** comes from the solver's stdout: one `Iteration = N Error = E` line per step, and `Failed to converge. Learning rate reduced to: …` when it restarts (the attempt number goes up and the iteration count starts again). The Worker forwards these at most every 50 ms; they arrive on the main thread while the synchronous solve is still running.
 - **Cancel** terminates the Worker; the next layout starts a fresh one. `performLayout` cannot be interrupted from inside.
 - **Speed:** a 271-node amigurumi ball takes about 130–190 ms in the browser at 500 iterations; a 155-node flat swatch about 40 ms. On the test ball the mean edge length is within 10% of its rest length, matching the manual's claim.
-- The result buffer returned by `performLayout` is never freed (upstream does not free it either). A long session leaks a little WASM memory per layout; if that matters, recycle the Worker every N layouts.
+- **Large patterns are slow.** The 4,646-stitch `textHat` takes about 120 s at 500 iterations, in Node and in the browser alike; the 482-stitch granny square about 0.5 s. Cost grows much faster than the node count. A 20-row amigurumi (NFR-1: first layout within 10 s) is far below this, but large pieces will need incremental layout or fewer iterations (M5).
+- The result buffer returned by `performLayout` is never freed (upstream does not free it either), and WASM memory does not shrink. `LayoutClient` replaces its Worker after every 50 finished layouts.
 
 ## 4. Core types
 
@@ -343,6 +356,9 @@ The solver does not prevent overlaps. The renderer offsets loops that share a pl
 
 ### 6.5 Levels of detail
 
+**Structure mode: built (M0).** Code: `packages/app/src/view/structureView.ts`. Stitches are spheres and edges are cylinders, each kind one `InstancedMesh`; sizes scale with the median yarn edge length. Colour is the pattern's `COLOR:` or the stitch type. Internal nodes and gray edges are hidden unless asked for. Hovering a stitch highlights it and the stitches it is worked into. It renders on demand, not in a loop. 2D layouts are viewed face-on.
+
+
 As FR-5.6: structure (spheres and cylinders), yarn (tubes), yarn + texture. Above a stitch threshold, set during M3 by measurement, the default drops to structure mode. Tube segments per stitch and radial segments per ring both fall with distance from the camera.
 
 ## 7. Evaluation harness
@@ -463,7 +479,7 @@ Evaluation comes before the translator on purpose: without the harness there is 
 
 1. **StitchSwitch class codes.** What do `X` and `Y` in the `Variation` column mean, and does blank mean class B? Ask the authors; until then, report StitchSwitch results overall, not per class.
 2. **StitchSwitch licence.** Ask the authors whether evaluation results may be published and whether the data may be redistributed.
-3. **Parser internals (M0).** The row number in parse errors; how per-row counts are exposed; the DOT format.
+3. ~~**Parser internals (M0).**~~ Settled: see §3.2 and §3.3.
 4. **`amendPrevious`.** Is "labels only" a strict enough rule to check automatically? The alternative is to require the model to rewrite the whole prefix, which is simpler to check but costs more tokens.
 5. **Whole vs row mode.** If whole-pattern translation scores better on structure match, the app may use it for the first pass and row mode only for repairs. Decide from M2 results.
 
