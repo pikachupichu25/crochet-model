@@ -5,7 +5,8 @@ Unmodified files from [stassev/CrochetPARADE](https://github.com/stassev/Crochet
 | File | Role |
 | --- | --- |
 | `parse64.js` | Pattern parser. `processText(text, "")` returns `[graphJson, simpleDot]` or throws. Also defines the built-in stitch `Dictionary` and about 60 example patterns (`text…` globals). |
-| `graph64.js`, `graph64.wasm` | Layout solver (Emscripten build of `graph.cpp`). Not used yet; wired up in M0's layout step. |
+| `graph64.js`, `graph64.wasm` | Layout solver (Emscripten build of `graph.cpp`). Exports `ccall`, `_malloc`, `_free`, `stringToUTF8`, `UTF8ToString`, and `_performLayout`. |
+| `package.json` | Ours, not upstream: marks these files as CommonJS inside this ESM repository. |
 
 - Upstream commit: see [COMMIT](./COMMIT).
 - Checksums: see [SHA256SUMS](./SHA256SUMS).

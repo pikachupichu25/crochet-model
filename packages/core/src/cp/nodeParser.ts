@@ -9,23 +9,21 @@ import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 import {
   createValidator,
-  type HostOutcome,
+  runInScope,
   type ParserHost,
+  type ParserScope,
 } from "./validator.ts";
 
 export const PARSER_FILE = "parse64.js";
 
-const DEFAULT_PARSER_PATH = fileURLToPath(
-  new URL(`../../../../vendor/crochetparade/${PARSER_FILE}`, import.meta.url),
+export const VENDOR_DIR = fileURLToPath(
+  new URL("../../../../vendor/crochetparade/", import.meta.url),
 );
 
-interface ParserGlobals {
-  processText(text: string, json0: string): [string, string];
-  WARNINGS?: string[];
-}
+const DEFAULT_PARSER_PATH = `${VENDOR_DIR}${PARSER_FILE}`;
 
 const silent = () => {};
-const silentConsole = {
+export const silentConsole = {
   log: silent,
   info: silent,
   warn: silent,
@@ -42,24 +40,11 @@ export function createNodeParserHost(
   });
 
   return {
-    run(text: string): HostOutcome {
-      // The parser reports warnings through alert(); errors are thrown.
-      const alerts: string[] = [];
-      const sandbox: Record<string, unknown> = {
-        console: silentConsole,
-        alert: (msg: unknown) => alerts.push(String(msg)),
-      };
-      sandbox.window = sandbox;
-      const context = vm.createContext(sandbox);
+    run(text, options) {
+      // Warnings go through alert() and are also kept in the WARNINGS global.
+      const context = vm.createContext({ console: silentConsole, alert: silent });
       script.runInContext(context);
-      const parser = context as unknown as ParserGlobals;
-      const warnings = () => [...(parser.WARNINGS ?? [])];
-      try {
-        const [graphJson, simpleDot] = parser.processText(text, "");
-        return { ok: true, graphJson, simpleDot, warnings: warnings() };
-      } catch (error) {
-        return { ok: false, error, warnings: warnings() };
-      }
+      return runInScope(context as unknown as ParserScope, text, options);
     },
   };
 }

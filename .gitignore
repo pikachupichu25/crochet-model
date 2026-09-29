@@ -2,3 +2,4 @@ node_modules/
 .DS_Store
 # Evaluation datasets are downloaded, never committed (see SPEC.md §7.1).
 packages/eval/data/
+dist/

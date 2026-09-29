@@ -1,0 +1,16 @@
+{
+  "name": "@crochet-model/app",
+  "private": true,
+  "type": "module",
+  "license": "GPL-3.0-or-later",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "@crochet-model/core": "*"
+  },
+  "devDependencies": {
+    "vite": "^8.3.1"
+  }
+}

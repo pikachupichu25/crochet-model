@@ -1,11 +1,24 @@
 // Runtime-agnostic validation of CrochetPARADE text.
 //
-// The CrochetPARADE parser is a browser script with globals, so running it is
-// the job of a ParserHost (Node: nodeParser.ts; a Web Worker host comes later).
-// This module turns what the host returns into a typed ValidationResult: a
-// classified error, per-row stitch counts and the raw graph output.
+// The CrochetPARADE parser is a browser script with globals, so loading it is
+// the job of a ParserHost (Node: nodeParser.ts, a vm context; browser:
+// parserScope.ts, inside a Web Worker). This module turns what the host
+// returns into a typed ValidationResult: a classified error, per-row stitch
+// counts and the raw graph output.
 
 import { mapRowsToLines } from "./sourceLines.ts";
+
+/** 2D for flat work, 3D for shaped work. CrochetPARADE's default is 3. */
+export type Dimension = 2 | 3;
+
+export interface ParseOptions {
+  /**
+   * Sets the parser's DIM global. It changes the first line of simpleDot and,
+   * in 3D, adds the orientation constraints the layout solver needs. It does
+   * not change whether a pattern is valid.
+   */
+  dimension?: Dimension;
+}
 
 /** What a ParserHost reports for one call of CrochetPARADE's processText. */
 export type HostOutcome =
@@ -13,7 +26,30 @@ export type HostOutcome =
   | { ok: false; error: unknown; warnings: string[] };
 
 export interface ParserHost {
-  run(text: string): HostOutcome;
+  run(text: string, options?: ParseOptions): HostOutcome;
+}
+
+/** The globals of one freshly loaded copy of parse64.js. */
+export interface ParserScope {
+  processText(text: string, json0: string): [string, string];
+  readonly WARNINGS?: string[];
+  DIM: number;
+}
+
+/** Runs one parse in a fresh scope. Shared by every ParserHost. */
+export function runInScope(
+  scope: ParserScope,
+  text: string,
+  options: ParseOptions = {},
+): HostOutcome {
+  scope.DIM = options.dimension ?? 3;
+  const warnings = () => [...(scope.WARNINGS ?? [])];
+  try {
+    const [graphJson, simpleDot] = scope.processText(text, "");
+    return { ok: true, graphJson, simpleDot, warnings: warnings() };
+  } catch (error) {
+    return { ok: false, error, warnings: warnings() };
+  }
 }
 
 export type ParseErrorKind =
@@ -73,8 +109,8 @@ export const NON_COUNTING_TYPES: ReadonlySet<string> = new Set([
 
 export function createValidator(host: ParserHost) {
   return {
-    validate(text: string): ValidationResult {
-      const outcome = host.run(text);
+    validate(text: string, options?: ParseOptions): ValidationResult {
+      const outcome = host.run(text, options);
       const lines = mapRowsToLines(text);
       if (!outcome.ok) {
         const error = toParseError(outcome.error);

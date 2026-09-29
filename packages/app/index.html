@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>M0 Harness</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #fbfaf7;
+        --fg: #1f1d1a;
+        --muted: #6d6860;
+        --line: #d9d4ca;
+        --ok: #2f7d4f;
+        --bad: #b3372b;
+        --yarn: #3d64b3;
+        --attach: #c0503c;
+        --node: #1f1d1a;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #1b1a18;
+          --fg: #ece8e1;
+          --muted: #a19b91;
+          --line: #3a3732;
+          --ok: #6cc28e;
+          --bad: #ec7a6c;
+          --yarn: #7fa2e6;
+          --attach: #e58a76;
+          --node: #ece8e1;
+        }
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 system-ui, sans-serif; }
+      main { display: grid; grid-template-columns: minmax(280px, 380px) 1fr; gap: 16px; padding: 16px; min-height: 100vh; }
+      @media (max-width: 720px) { main { grid-template-columns: 1fr; } }
+      h1 { font-size: 16px; margin: 0 0 8px; }
+      textarea { width: 100%; height: 200px; font: 13px/1.4 ui-monospace, monospace; background: transparent; color: inherit; border: 1px solid var(--line); border-radius: 6px; padding: 8px; }
+      .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0; }
+      select, input, button { font: inherit; color: inherit; background: transparent; border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; }
+      input[type="number"] { width: 72px; }
+      button { cursor: pointer; }
+      button:disabled { opacity: 0.5; cursor: default; }
+      #status { font-weight: 600; }
+      #status.ok { color: var(--ok); }
+      #status.bad { color: var(--bad); }
+      table { border-collapse: collapse; width: 100%; font-size: 13px; }
+      td, th { text-align: left; padding: 2px 6px; border-bottom: 1px solid var(--line); }
+      th { color: var(--muted); font-weight: 500; }
+      .muted { color: var(--muted); }
+      progress { width: 160px; }
+      #plot { width: 100%; height: min(70vh, 640px); border: 1px solid var(--line); border-radius: 6px; }
+      #plot .yarn { stroke: var(--yarn); }
+      #plot .attach { stroke: var(--attach); }
+      #plot .node { fill: var(--node); }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section>
+        <h1>CrochetPARADE: validate and lay out</h1>
+        <label class="muted" for="pattern">CrochetPARADE text</label>
+        <textarea id="pattern" spellcheck="false"></textarea>
+        <div class="controls">
+          <select id="example" aria-label="Example"></select>
+          <select id="dimension" aria-label="Dimension">
+            <option value="3">3D</option>
+            <option value="2">2D</option>
+          </select>
+        </div>
+        <p><span id="status">…</span> <span id="parseTime" class="muted"></span></p>
+        <p id="message"></p>
+        <table id="rows"></table>
+      </section>
+      <section>
+        <div class="controls">
+          <label>seed <input id="seed" type="number" value="0" min="0" /></label>
+          <label>iterations <input id="iterations" type="number" value="500" min="10" step="50" /></label>
+          <button id="layout">Lay out</button>
+          <button id="cancel" disabled>Cancel</button>
+          <progress id="progress" max="1" value="0"></progress>
+          <span id="layoutInfo" class="muted"></span>
+        </div>
+        <div class="controls">
+          <label>rotate <input id="rotate" type="range" min="0" max="360" value="30" /></label>
+          <span class="muted">blue: yarn from stitch to stitch · red: worked into</span>
+        </div>
+        <svg id="plot" role="img" aria-label="Layout projection"></svg>
+      </section>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

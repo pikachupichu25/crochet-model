@@ -78,7 +78,7 @@ The parser is a browser script with globals. It needs only `alert` (for warnings
 2. stubs `alert` and `console`, and reads the parser's `WARNINGS` global;
 3. calls `processText(text, "")`, which returns `[graphJson, simpleDot]` or throws.
 
-A browser Worker host implementing the same `ParserHost` interface is still to do.
+The browser host (`parserScope.ts`, used in `parser.worker.ts`) wraps the parser source in `new Function`, compiled once and called per parse, so each parse gets fresh top-level variables. It is not a full sandbox (an undeclared assignment would reach the worker's globals), which is acceptable in a worker that does nothing else. A test checks that it returns the same results as the Node host.
 
 ```ts
 interface ValidationResult {
@@ -138,7 +138,17 @@ interface Stitch {
 
 ### 3.4 Layout
 
-`graph64.wasm` runs in a dedicated Worker. The worker takes the full DOT plus settings (`iterations`, `start` seed, 2D or 3D) and returns positions. It posts progress every 25 iterations and supports cancel (FR-4.1). How `index.html` calls the solver, and its argument format, is an M0 spike; the solver itself is described in the ply-split-braiding [`docs/elastic/README.md`](../ply-split-braiding/docs/elastic/README.md) §2.
+**Status: built (M0).** Code: `packages/core/src/cp/layout.ts` (runtime-agnostic), `nodeSolver.ts` (Node loader); `packages/app/src/workers/` (parser and layout workers, promise clients). The solver itself is described in the ply-split-braiding [`docs/elastic/README.md`](../ply-split-braiding/docs/elastic/README.md) §2.
+
+What M0 established:
+
+- **Input is `simpleDot`.** Its first line is the dimension, set by the parser's `DIM` global (so `validate(text, { dimension })` must be called with the dimension wanted). Then come nodes (`"name"`, or `"name" {x,y,z}` to fix a position), edges (`"a" -- "b" restLength`), 3D orientation quadruples (`"a"---"b"---"c"---"d"---h`), and the pattern's `DOT:` settings as bare lines. The solver reads settings from any non-node, non-edge line, and a later line wins, so the app's overrides (`start=…` seed, `iterations=…`) are appended at the end.
+- **Output** is one `{"name": "…","pos": "x,y[,z]"},` line per node, including internal nodes. It is deterministic for a given input and seed.
+- **Loading.** `graph64.js` reads settings from a pre-existing global `Module` (`print`, `wasmBinary`, `onRuntimeInitialized`). Its own `var Module` would hide a global under `require()`, so Node runs it in a `vm` context and the Worker runs it through `new Function("Module", source)`. The Emscripten build does not export `lengthBytesUTF8`; `TextEncoder` gives the byte length.
+- **Progress** comes from the solver's stdout: one `Iteration = N Error = E` line per step, and `Failed to converge. Learning rate reduced to: …` when it restarts (the attempt number goes up and the iteration count starts again). The Worker forwards these at most every 50 ms; they arrive on the main thread while the synchronous solve is still running.
+- **Cancel** terminates the Worker; the next layout starts a fresh one. `performLayout` cannot be interrupted from inside.
+- **Speed:** a 271-node amigurumi ball takes about 130–190 ms in the browser at 500 iterations; a 155-node flat swatch about 40 ms. On the test ball the mean edge length is within 10% of its rest length, matching the manual's claim.
+- The result buffer returned by `performLayout` is never freed (upstream does not free it either). A long session leaks a little WASM memory per layout; if that matters, recycle the Worker every N layouts.
 
 ## 4. Core types
 
