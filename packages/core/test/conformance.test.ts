@@ -1,5 +1,5 @@
 // Every example pattern bundled with CrochetPARADE must parse with the
-// vendored parser (SPEC.md §10.2). Run after every vendor upgrade.
+// vendored parser (docs/SPEC.md §10.2). Run after every vendor upgrade.
 
 import { describe, expect, it } from "vitest";
 import { parseStitchGraph } from "../src/cp/graph.ts";

@@ -4,7 +4,7 @@
 > Last updated: 2026-09-29  
 > Purpose: turn a crochet pattern written in ordinary English into CrochetPARADE code with an LLM, then show it as a model that looks like real crocheted yarn, not a ball-and-stick graph.
 
-Related docs in this folder: [CROCHET_CONVENTIONS.md](./CROCHET_CONVENTIONS.md) (pattern abbreviations and US/UK terms, the input side of translation), [MATH.md](./MATH.md) (layout models beyond CrochetPARADE's spring graph) and [RELATED_WORK.md](./RELATED_WORK.md) (survey of parsers and LLM translation work). CrochetPARADE's layout solver was studied in the ply-split-braiding project ([`docs/elastic/README.md`](../ply-split-braiding/docs/elastic/README.md) §2); that study is reused here rather than repeated.
+Related docs in this folder: [CROCHET_CONVENTIONS.md](./CROCHET_CONVENTIONS.md) (pattern abbreviations and US/UK terms, the input side of translation), [MATH.md](./MATH.md) (layout models beyond CrochetPARADE's spring graph) and [RELATED_WORK.md](./RELATED_WORK.md) (survey of parsers and LLM translation work). CrochetPARADE's layout solver was studied in the ply-split-braiding project ([`docs/elastic/README.md`](../../ply-split-braiding/docs/elastic/README.md) §2); that study is reused here rather than repeated.
 
 ## 1. Summary
 
@@ -54,7 +54,7 @@ The MVP must let a user:
 
 ## 4. Background: how CrochetPARADE works
 
-This section records the study the app is built on. Sources are the CrochetPARADE repository (read on 2026-09-29, last push 2026-05-26): `README.md`, `Manual.md`, `capabilities.md`, `index.html` (built-in stitch table), `translator_ui.js` and `deterministic_translator.js`. The layout solver was read earlier from `graph.cpp`; see [ply-split-braiding `docs/elastic/README.md`](../ply-split-braiding/docs/elastic/README.md) §2.
+This section records the study the app is built on. Sources are the CrochetPARADE repository (read on 2026-09-29, last push 2026-05-26): `README.md`, `Manual.md`, `capabilities.md`, `index.html` (built-in stitch table), `translator_ui.js` and `deterministic_translator.js`. The layout solver was read earlier from `graph.cpp`; see [ply-split-braiding `docs/elastic/README.md`](../../ply-split-braiding/docs/elastic/README.md) §2.
 
 ### 4.1 Pipeline
 
@@ -116,7 +116,7 @@ Parsing the pattern chains these subgraphs into one graph. The graph records top
 
 ### 4.4 Layout
 
-The solver ([ply-split-braiding `docs/elastic/README.md`](../ply-split-braiding/docs/elastic/README.md) §2) treats every edge as a spring at its rest length. It adds weak, annealed springs between every pair of nodes at their graph distance, runs gradient descent from a random start (500 iterations by default), then a short damped pass. In 3D it also projects paired nodes along the local surface normal to give the fabric a front and back.
+The solver ([ply-split-braiding `docs/elastic/README.md`](../../ply-split-braiding/docs/elastic/README.md) §2) treats every edge as a spring at its rest length. It adds weak, annealed springs between every pair of nodes at their graph distance, runs gradient descent from a random start (500 iterations by default), then a short damped pass. In 3D it also projects paired nodes along the local surface normal to give the fabric a front and back.
 
 Consequences for this app:
 
@@ -258,7 +258,7 @@ This is the part CrochetPARADE does not provide. The layout gives positions for 
 | Option | How | For | Against |
 | --- | --- | --- | --- |
 | **A. Embed** | Vendor the parser (`parse64.js`), the solver (`graph64.wasm`) and the stitch dictionary. Call them from the app. | Exact behaviour, including every stitch and every attachment rule, with no reimplementation. Validation in the LLM loop is identical to what users see in CrochetPARADE. | GPLv3: the app's code has to be GPLv3 too. The parser is a large script written for a single page with globals (`processText`, `alert`), so it must be wrapped and its UI calls intercepted, as `translator_ui.js` already does with `withAlertSuppressed`. |
-| **B. Reimplement** | Write the parser and solver from the grammar, which is in the public domain, and from the solver description in [ply-split-braiding `docs/elastic`](../ply-split-braiding/docs/elastic/README.md). | Free choice of licence. Typed code that is easy to test and to extend with the extra data the renderer needs (loop orientation). | Large effort. Parsing edge cases will diverge, so code that validates here may fail in CrochetPARADE, and the other way round. |
+| **B. Reimplement** | Write the parser and solver from the grammar, which is in the public domain, and from the solver description in [ply-split-braiding `docs/elastic`](../../ply-split-braiding/docs/elastic/README.md). | Free choice of licence. Typed code that is easy to test and to extend with the extra data the renderer needs (loop orientation). | Large effort. Parsing edge cases will diverge, so code that validates here may fail in CrochetPARADE, and the other way round. |
 | **C. Hybrid** | A for the MVP. Later, B for the parser only, with a conformance test suite that runs both on the same corpus. | Fast start, and a path off GPL if needed. | Two parsers during the transition. |
 
 **Recommendation: A for the MVP.** The app is useless if its code does not open in CrochetPARADE, and embedding is the only way to guarantee that. Revisit if a non-GPL licence becomes a requirement.
@@ -329,7 +329,7 @@ Translation quality is measured, not judged by eye.
 ## 13. Sources
 
 - CrochetPARADE: [site](https://www.crochetparade.org/), [repository](https://github.com/stassev/CrochetPARADE) (`README.md`, `Manual.md`, `capabilities.md`, `index.html`, `translator_ui.js`, `deterministic_translator.js`, `graph.cpp`).
-- Solver reading in the ply-split-braiding project: [ply-split-braiding `docs/elastic/README.md`](../ply-split-braiding/docs/elastic/README.md) §2.
+- Solver reading in the ply-split-braiding project: [ply-split-braiding `docs/elastic/README.md`](../../ply-split-braiding/docs/elastic/README.md) §2.
 - Dias, R. and Karim, K. (2025). [Translation of User Crochet Patterns to CrochetPARADE Syntax Using Large Language Models](https://ojs.aaai.org/index.php/AAAI-SS/article/view/36054). *Proceedings of the AAAI Symposium Series* 6(1), 200–208. Local copy: [05499-SuSS.DiasR.pdf](./05499-SuSS.DiasR.pdf).
 - Li, P., Huang, X. and Chawla, N. V. (2025). [CrochetBench: Can Vision-Language Models Move from Describing to Doing in Crochet Domain?](https://arxiv.org/abs/2511.09483v1)
 - Greer, É. and Mould, D. (2025). *Modeling crochet patterns with a force-directed graph layout*. Eurographics digital library (linked from the CrochetPARADE README).

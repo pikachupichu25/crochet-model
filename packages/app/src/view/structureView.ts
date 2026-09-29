@@ -1,4 +1,4 @@
-// Structure mode (SPEC.md §6.5): a ball-and-stick view of a laid-out stitch
+// Structure mode (docs/SPEC.md §6.5): a ball-and-stick view of a laid-out stitch
 // graph. Stitches are spheres, edges are cylinders; both are instanced, so a
 // few thousand stitches cost two draw calls per kind. Renders on demand, not
 // in a loop.

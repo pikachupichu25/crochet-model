@@ -37,7 +37,7 @@ This spec takes the defaults for the open decisions in REQUIREMENTS.md §11. Cha
 
 ```text
 crochet-model/
-  REQUIREMENTS.md  SPEC.md  RELATED_WORK.md  CROCHET_CONVENTIONS.md  MATH.md
+  docs/                        REQUIREMENTS.md  SPEC.md  RELATED_WORK.md  CROCHET_CONVENTIONS.md  MATH.md, paper PDF
   vendor/crochetparade/        pinned copy of CrochetPARADE files (GPLv3); see §3
     COMMIT                     upstream commit hash
     parse64.js  graph64.js  graph64.wasm  …
@@ -150,7 +150,7 @@ What M0 established by reading `export_to_dot` in `parse64.js` and probing all b
 
 ### 3.4 Layout
 
-**Status: built (M0).** Code: `packages/core/src/cp/layout.ts` (runtime-agnostic), `nodeSolver.ts` (Node loader); `packages/app/src/workers/` (parser and layout workers, promise clients). The solver itself is described in the ply-split-braiding [`docs/elastic/README.md`](../ply-split-braiding/docs/elastic/README.md) §2.
+**Status: built (M0).** Code: `packages/core/src/cp/layout.ts` (runtime-agnostic), `nodeSolver.ts` (Node loader); `packages/app/src/workers/` (parser and layout workers, promise clients). The solver itself is described in the ply-split-braiding [`docs/elastic/README.md`](../../ply-split-braiding/docs/elastic/README.md) §2.
 
 What M0 established:
 

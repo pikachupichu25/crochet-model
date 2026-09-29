@@ -1,4 +1,4 @@
-// Typed stitch graph from the parser's graphJson (SPEC.md §3.3).
+// Typed stitch graph from the parser's graphJson (docs/SPEC.md §3.3).
 //
 // Format, from export_to_dot in parse64.js (vendored commit 06e987b):
 //
