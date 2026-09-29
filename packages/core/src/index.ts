@@ -25,6 +25,7 @@ export {
   parseProgressLine,
   readDimension,
   readIterations,
+  readSeed,
   type EmscriptenSolver,
   type LayoutProgress,
   type LayoutResult,
@@ -32,6 +33,17 @@ export {
   type SolverLoader,
   type SolverSettings,
 } from "./cp/layout.ts";
+export {
+  countEdgeCrossings,
+  DEFAULT_MAX_SEEDS,
+  FOLD_CROSSING_RATIO,
+  isFolded,
+  layoutUnfolded,
+  type CrossingCount,
+  type FoldCheck,
+  type UnfoldedLayoutResult,
+  type UnfoldOptions,
+} from "./cp/fold.ts";
 export {
   parseStitchGraph,
   type EdgeKind,

@@ -74,8 +74,8 @@
       </section>
       <section>
         <div class="controls">
-          <label>seed <input id="seed" type="number" value="0" min="0" /></label>
-          <label>iterations <input id="iterations" type="number" value="500" min="10" step="50" /></label>
+          <label>seed <input id="seed" type="number" min="0" placeholder="auto" title="Blank uses the pattern's DOT: start= (default 0)" /></label>
+          <label>iterations <input id="iterations" type="number" min="10" step="50" placeholder="auto" title="Blank uses the pattern's DOT: iterations= (default 500)" /></label>
           <button id="layout">Lay out</button>
           <button id="cancel" disabled>Cancel</button>
           <progress id="progress" max="1" value="0"></progress>

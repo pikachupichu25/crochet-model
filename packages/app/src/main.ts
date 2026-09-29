@@ -74,6 +74,9 @@ void import("../../../vendor/crochetparade/parse64.js?raw").then(({ default: sou
   exampleSelect.append(group);
 });
 
+// A blank box keeps the pattern's own DOT: setting; a number overrides it.
+const optionalNumber = (input: HTMLInputElement) => (input.value.trim() === "" ? undefined : Number(input.value));
+
 const dimension = () => Number(dimensionSelect.value) as Dimension;
 
 async function validateNow() {
@@ -127,19 +130,32 @@ layoutButton.addEventListener("click", async () => {
   layoutButton.disabled = true;
   progressEl.value = 0;
   layoutInfo.textContent = "starting…";
+  const seed = optionalNumber(seedInput);
+  let retryNote = "";
   const job = layoutClient.layout(
     latest.simpleDot!,
-    { seed: Number(seedInput.value), iterations: Number(iterationsInput.value) },
+    { seed, iterations: optionalNumber(iterationsInput) },
     (p) => {
       progressEl.value = p.iteration / p.iterations;
-      layoutInfo.textContent = `attempt ${p.attempt}, iteration ${p.iteration}/${p.iterations}, error ${p.error.toFixed(3)}`;
+      layoutInfo.textContent = `${retryNote}seed ${p.seed}, attempt ${p.attempt}, iteration ${p.iteration}/${p.iterations}, error ${p.error.toFixed(3)}`;
     },
+    (_seed, previous) => {
+      retryNote = `seed ${previous.seedsTried.at(-1)} folded (${previous.crossings} crossings), retrying · `;
+    },
+    // A seed typed in the box means that seed, folded or not.
+    seed === undefined ? undefined : 1,
   );
   cancelButton.onclick = () => job.cancel();
   try {
     const result = await job.promise;
     progressEl.value = 1;
-    layoutInfo.textContent = `${graph.stitches.length} stitches, ${Object.keys(result.positions).length} nodes in ${result.ms} ms, ${result.attempts} attempt(s), final error ${result.finalError?.toFixed(3)}`;
+    const fold = result.fold;
+    const foldNote = !fold
+      ? ""
+      : `, ${fold.crossings}/${fold.edges} edges crossing${fold.folded ? " (still folded)" : ""}${
+          fold.seedsTried.length > 1 ? `, tried seeds ${fold.seedsTried.join(", ")}` : ""
+        }`;
+    layoutInfo.textContent = `${graph.stitches.length} stitches, ${Object.keys(result.positions).length} nodes in ${result.ms} ms, seed ${result.seed}, ${result.attempts} attempt(s), final error ${result.finalError?.toFixed(3)}${foldNote}`;
     view.setModel(graph, result);
   } catch (error) {
     layoutInfo.textContent = error instanceof LayoutCancelled ? "cancelled" : `failed: ${(error as Error).message}`;

@@ -2,10 +2,11 @@
 
 import type {
   Dimension,
+  FoldCheck,
   LayoutProgress,
-  LayoutResult,
   SolverSettings,
   StitchGraph,
+  UnfoldedLayoutResult,
   ValidationResult,
 } from "@crochet-model/core";
 import type { LayoutResponse, ParserResponse } from "./protocol.ts";
@@ -56,7 +57,7 @@ export class LayoutCancelled extends Error {
 }
 
 export interface LayoutJob {
-  promise: Promise<LayoutResult>;
+  promise: Promise<UnfoldedLayoutResult>;
   cancel(): void;
 }
 
@@ -83,11 +84,14 @@ export class LayoutClient {
     simpleDot: string,
     settings: SolverSettings = {},
     onProgress?: (progress: LayoutProgress) => void,
+    /** A 2D layout came out folded and is being redone with `seed`. */
+    onRetry?: (seed: number, previous: FoldCheck) => void,
+    maxSeeds?: number,
   ): LayoutJob {
     this.cancel();
     const worker = (this.worker ??= this.spawn());
     const id = this.nextId++;
-    const promise = new Promise<LayoutResult>((resolve, reject) => {
+    const promise = new Promise<UnfoldedLayoutResult>((resolve, reject) => {
       this.current = { id, reject };
       worker.onmessage = (event: MessageEvent<LayoutResponse>) => {
         const message = event.data;
@@ -96,12 +100,16 @@ export class LayoutClient {
           onProgress?.(message.progress);
           return;
         }
+        if (message.type === "retry") {
+          onRetry?.(message.seed, message.previous);
+          return;
+        }
         this.current = undefined;
         if (++this.finished >= this.recycleAfter) this.retire();
         if (message.type === "result") resolve(message.result);
         else reject(new Error(message.message));
       };
-      worker.postMessage({ id, simpleDot, settings });
+      worker.postMessage({ id, simpleDot, settings, maxSeeds });
     });
     return { promise, cancel: () => this.current?.id === id && this.cancel() };
   }

@@ -2,8 +2,9 @@
 
 import type {
   Dimension,
+  FoldCheck,
   LayoutProgress,
-  LayoutResult,
+  UnfoldedLayoutResult,
   SolverSettings,
   StitchGraph,
   ValidationResult,
@@ -33,9 +34,12 @@ export interface LayoutRequest {
   id: number;
   simpleDot: string;
   settings?: SolverSettings;
+  /** Seeds to try while a 2D layout comes out folded. Default DEFAULT_MAX_SEEDS; 1 turns retrying off. */
+  maxSeeds?: number;
 }
 
 export type LayoutResponse =
   | { id: number; type: "progress"; progress: LayoutProgress }
-  | { id: number; type: "result"; result: LayoutResult }
+  | { id: number; type: "retry"; seed: number; previous: FoldCheck }
+  | { id: number; type: "result"; result: UnfoldedLayoutResult }
   | { id: number; type: "error"; message: string };

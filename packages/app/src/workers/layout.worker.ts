@@ -4,7 +4,7 @@
 // the solve (the main thread receives them as they are sent) and cancelling
 // means terminating this worker.
 
-import { createSolver, type EmscriptenSolver, type SolverLoader } from "@crochet-model/core";
+import { createSolver, layoutUnfolded, type EmscriptenSolver, type SolverLoader } from "@crochet-model/core";
 import solverSource from "../../../../vendor/crochetparade/graph64.js?raw";
 import wasmUrl from "../../../../vendor/crochetparade/graph64.wasm?url";
 import type { LayoutRequest, LayoutResponse } from "./protocol.ts";
@@ -33,17 +33,23 @@ const solverReady = createSolver(workerLoader);
 const PROGRESS_INTERVAL_MS = 50;
 
 self.onmessage = async (event: MessageEvent<LayoutRequest>) => {
-  const { id, simpleDot, settings } = event.data;
+  const { id, simpleDot, settings, maxSeeds } = event.data;
   try {
     const solver = await solverReady;
     let lastPost = 0;
-    const result = solver.layout(simpleDot, settings, (progress) => {
-      const now = performance.now();
-      if (now - lastPost >= PROGRESS_INTERVAL_MS || progress.iteration === progress.iterations) {
-        lastPost = now;
-        post({ id, type: "progress", progress });
-      }
-    });
+    const result = layoutUnfolded(
+      solver,
+      simpleDot,
+      settings,
+      (progress) => {
+        const now = performance.now();
+        if (now - lastPost >= PROGRESS_INTERVAL_MS || progress.iteration === progress.iterations) {
+          lastPost = now;
+          post({ id, type: "progress", progress });
+        }
+      },
+      { maxSeeds, onRetry: (seed, previous) => post({ id, type: "retry", seed, previous }) },
+    );
     post({ id, type: "result", result });
   } catch (error) {
     post({ id, type: "error", message: String((error as Error)?.message ?? error) });

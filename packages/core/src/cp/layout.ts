@@ -38,6 +38,8 @@ export interface SolverSettings {
 }
 
 export interface LayoutProgress {
+  /** The random seed this run uses. */
+  seed: number;
   /** Starts at 1; goes up when the solver blows up and restarts with a smaller step. */
   attempt: number;
   iteration: number;
@@ -48,6 +50,8 @@ export interface LayoutProgress {
 
 export interface LayoutResult {
   dimension: Dimension;
+  /** The random seed the layout used. */
+  seed: number;
   /** Node name ("row,index|statement", or an internal node name) → [x, y] or [x, y, z]. */
   positions: Record<string, number[]>;
   iterations: number;
@@ -58,6 +62,7 @@ export interface LayoutResult {
 }
 
 const DEFAULT_ITERATIONS = 500;
+const DEFAULT_SEED = 0;
 
 export function readDimension(simpleDot: string): Dimension {
   const first = simpleDot.slice(0, simpleDot.indexOf("\n")).trim();
@@ -88,6 +93,20 @@ export function readIterations(input: string): number {
     if (m) iterations = Number(m[1]);
   }
   return iterations;
+}
+
+/**
+ * The seed the solver will use. Like the solver, it takes the first number
+ * after "start" on the last non-node line that has one.
+ */
+export function readSeed(input: string): number {
+  let seed = DEFAULT_SEED;
+  for (const line of input.split("\n")) {
+    if (line.startsWith('"')) continue; // node and edge lines
+    const m = /start\D*?(\d+)/.exec(line);
+    if (m) seed = Number(m[1]);
+  }
+  return seed;
 }
 
 /** Solver output is `{"name": "…","pos": "x,y[,z]"},` per line. */
@@ -130,6 +149,7 @@ export async function createSolver(load: SolverLoader): Promise<Solver> {
       const started = Date.now();
       const input = buildSolverInput(simpleDot, settings);
       const iterations = readIterations(input);
+      const seed = readSeed(input);
       let attempt = 1;
       let finalError: number | undefined;
       listener = (line) => {
@@ -140,7 +160,7 @@ export async function createSolver(load: SolverLoader): Promise<Solver> {
           return;
         }
         finalError = p.error;
-        onProgress?.({ attempt, iteration: p.iteration + 1, iterations, error: p.error });
+        onProgress?.({ seed, attempt, iteration: p.iteration + 1, iterations, error: p.error });
       };
 
       const bytes = new TextEncoder().encode(input).length + 1;
@@ -158,6 +178,7 @@ export async function createSolver(load: SolverLoader): Promise<Solver> {
 
       return {
         dimension: readDimension(simpleDot),
+        seed,
         positions: parseLayoutOutput(raw),
         iterations,
         attempts: attempt,
