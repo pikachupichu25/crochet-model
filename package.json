@@ -1,0 +1,23 @@
+{
+  "name": "crochet-model",
+  "private": true,
+  "type": "module",
+  "license": "GPL-3.0-or-later",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "test": "vitest run",
+    "test:conformance": "CP_SLOW=1 vitest run packages/core/test/conformance.test.ts",
+    "typecheck": "tsc --noEmit",
+    "validate": "node --experimental-strip-types --no-warnings packages/core/src/cli/validate.ts"
+  },
+  "engines": {
+    "node": ">=22.6"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0",
+    "vitest": "^3.0.0"
+  }
+}

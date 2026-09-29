@@ -1,0 +1,10 @@
+{
+  "name": "@crochet-model/core",
+  "private": true,
+  "type": "module",
+  "license": "GPL-3.0-or-later",
+  "exports": {
+    ".": "./src/index.ts",
+    "./node": "./src/cp/nodeParser.ts"
+  }
+}
