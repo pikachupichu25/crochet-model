@@ -135,6 +135,11 @@ export class StructureView {
     const cssColor = (name: string, fallback: string) =>
       new THREE.Color(style.getPropertyValue(name).trim() || fallback);
 
+    // A magic ring is one node that round 1 hangs off; drawn, it reads as a
+    // stray stitch. CrochetPARADE draws it too small to see. Leave it and its
+    // edges out.
+    const rings = new Set(graph.stitches.filter((s) => s.type === "ring").map((s) => s.id));
+
     // Size everything from the typical yarn edge, so any pattern scale reads the same.
     const unit = medianLength(graph.edges.filter((e) => e.kind === "yarn"), at) || 1;
 
@@ -150,7 +155,7 @@ export class StructureView {
     for (const group of edgeGroups) {
       const segments: [THREE.Vector3, THREE.Vector3][] = [];
       for (const e of graph.edges) {
-        if (e.kind !== group.kind) continue;
+        if (e.kind !== group.kind || rings.has(e.tail) || rings.has(e.head)) continue;
         const a = at(e.tail);
         const b = at(e.head);
         if (a && b && a.distanceToSquared(b) > 1e-12) segments.push([a, b]);
@@ -176,9 +181,9 @@ export class StructureView {
       this.model.add(mesh);
     }
 
-    // Stitches (top nodes). Hidden tops (start_anew) are left out.
+    // Stitches (top nodes). Hidden tops (start_anew) and rings are left out.
     const sphere = new THREE.SphereGeometry(1, 16, 12);
-    this.shownStitches = graph.stitches.filter((s) => s.type !== "hidden" && at(s.id));
+    this.shownStitches = graph.stitches.filter((s) => s.type !== "hidden" && !rings.has(s.id) && at(s.id));
     const stitchMesh = new THREE.InstancedMesh(
       sphere,
       new THREE.MeshStandardMaterial({ roughness: 0.45 }),
