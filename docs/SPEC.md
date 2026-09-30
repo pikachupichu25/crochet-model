@@ -163,6 +163,7 @@ What M0 established:
 - **Speed:** a 271-node amigurumi ball takes about 130–190 ms in the browser at 500 iterations; a 155-node flat swatch about 40 ms. On the test ball the mean edge length is within 10% of its rest length, matching the manual's claim.
 - **Large patterns are slow.** The 4,646-stitch `textHat` takes about 120 s at 500 iterations, in Node and in the browser alike; the 482-stitch granny square about 0.5 s. Cost grows much faster than the node count. A 20-row amigurumi (NFR-1: first layout within 10 s) is far below this, but large pieces will need incremental layout or fewer iterations (M5).
 - The result buffer returned by `performLayout` is never freed (upstream does not free it either), and WASM memory does not shrink. `LayoutClient` replaces its Worker after every 50 finished layouts.
+- **Separate pieces.** Pieces not joined by any edge (`start_anew`, `new`) are laid out on top of each other. crochetparade.org's Object Transform tool moves them apart after the layout and saves the moves in the pattern as `TRANSFORM_OBJECT: object,tx,ty,tz,rx,ry,rz`, which the parser skips and only the site's renderer reads. Objects are the connected components, numbered by their first node in the parser's output. Each is rotated about its centre of mass by Euler angles (radians, XYZ order, as three.js), then moved by (tx, ty, tz) in bounding radii of the whole model. `applyObjectTransforms` (core `cp/objectTransform.ts`) does the same on a 3D layout; the app applies it before drawing. The snowman example uses it; 2 of the 60 bundled examples do.
 
 ## 4. Core types
 
@@ -357,7 +358,9 @@ The solver does not prevent overlaps. The renderer offsets loops that share a pl
 
 ### 6.5 Levels of detail
 
-**Structure mode: built (M0).** Code: `packages/app/src/view/structureView.ts`. Stitches are spheres and edges are cylinders, each kind one `InstancedMesh`; sizes scale with the median yarn edge length. Colour is the pattern's `COLOR:` or the stitch type. Internal nodes and gray edges are hidden unless asked for. Hovering a stitch highlights it and the stitches it is worked into. It renders on demand, not in a loop. 2D layouts are viewed face-on.
+**Structure mode: built (M0).** Code: `packages/app/src/view/structureView.ts`. Stitches are spheres and edges are cylinders, each kind one `InstancedMesh`; sizes scale with the median yarn edge length. Colour is the pattern's `COLOR:` or the stitch type. Internal nodes and gray edges are hidden unless asked for. Hovering a stitch highlights it and the stitches it is worked into. It renders on demand, not in a loop. 2D layouts are viewed face-on. The harness lays out the bundled examples in the dimension crochetparade.org uses for each (five are 2D).
+
+**M0 render check (2026-09-30).** Five examples were run on crochetparade.org and in the harness: simplistic snowman (`textSnowman2`), baby bootie, apple, granny square (2D) and simple flower with post stitches. The site serves the same `parse64.js` as the vendored copy. For all five, the solver input (`simpleDot`) and every output position are identical to the site's, and the drawn shapes match. The snowman matched only after `TRANSFORM_OBJECT:` support (§3.4); a test checks its pieces against positions read from the site's scene.
 
 
 As FR-5.6: structure (spheres and cylinders), yarn (tubes), yarn + texture. Above a stitch threshold, set during M3 by measurement, the default drops to structure mode. Tube segments per stitch and radial segments per ring both fall with distance from the camera.
@@ -467,7 +470,7 @@ Refines REQUIREMENTS.md §10 with the spikes this spec depends on.
 
 | Milestone | Deliverables | Exit check |
 | --- | --- | --- |
-| **M0 Spike** | Vendor CrochetPARADE; validator wrapper in Node and a Worker; DOT → `StitchGraph`; call the solver from a Worker; render structure mode | Conformance suite passes (§10.2); 5 examples render as on crochetparade.org |
+| **M0 Spike** (done) | Vendor CrochetPARADE; validator wrapper in Node and a Worker; DOT → `StitchGraph`; call the solver from a Worker; render structure mode | Conformance suite passes (§10.2); 5 examples render as on crochetparade.org (§6.5) |
 | **M1 Evaluation first** | Dataset loaders (§7.1); `compare.ts`; rule-based baseline scores | Baseline table for StitchSwitch and CrochetBench |
 | **M2 Translate** | Segmentation; prompt v1; row loop with repair; `eval run` with `--batch`; first model and effort sweep | Row mode beats the rule-based baseline on structure match |
 | **M3 App** | Server; review UI; code editor; row ↔ stitch links | A new user translates and renders a sample pattern unaided |

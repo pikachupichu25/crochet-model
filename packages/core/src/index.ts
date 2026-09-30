@@ -53,3 +53,9 @@ export {
   type StitchGraph,
 } from "./cp/graph.ts";
 export { mapRowsToLines } from "./cp/sourceLines.ts";
+export {
+  applyObjectTransforms,
+  objectNumbers,
+  readObjectTransforms,
+  type ObjectTransform,
+} from "./cp/objectTransform.ts";

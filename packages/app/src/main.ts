@@ -2,6 +2,7 @@
 // and lays it out in the layout worker on request. Throwaway UI; the real app
 // comes in M3.
 
+import { applyObjectTransforms, readObjectTransforms } from "@crochet-model/core";
 import type { Dimension, StitchGraph, ValidationResult } from "@crochet-model/core";
 import { StructureView, type ColorMode } from "./view/structureView.ts";
 import { LayoutCancelled, LayoutClient, ParserClient } from "./workers/clients.ts";
@@ -12,6 +13,10 @@ const EXAMPLES: Record<string, string> = {
   "Granny-style round": "4ch,ss@[%,0]\n3ch,2dc@[-1,0],ch,3*[3dc@[-1,0],ch],ss@[%,0]",
   "Label error": "3ch\n3sc\n2*[sc,dc@A]",
 };
+
+// The bundled examples crochetparade.org lays out flat (its `textOptions` table);
+// the rest it shows in 3D.
+const FLAT_EXAMPLES = new Set(["Flower2", "Square", "Edging", "Swatch2", "Doily"]);
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const pattern = $<HTMLTextAreaElement>("pattern");
@@ -37,6 +42,7 @@ const layoutClient = new LayoutClient();
 
 let latest: ValidationResult | undefined;
 let latestGraph: StitchGraph | undefined;
+let latestText = "";
 let validateSeq = 0;
 
 const view = new StructureView($("view"));
@@ -83,10 +89,12 @@ async function validateNow() {
   const seq = ++validateSeq;
   // Until this pattern is checked, Lay out would use the previous one.
   layoutButton.disabled = true;
-  const { result, graph, ms } = await parser.validate(pattern.value, { dimension: dimension(), withGraph: true });
+  const text = pattern.value;
+  const { result, graph, ms } = await parser.validate(text, { dimension: dimension(), withGraph: true });
   if (seq !== validateSeq) return; // a newer edit is on its way
   latest = result;
   latestGraph = graph;
+  latestText = text;
   parseTimeEl.textContent = `${ms.toFixed(1)} ms in worker`;
   layoutButton.disabled = !result.ok;
   if (result.ok) {
@@ -117,8 +125,8 @@ pattern.addEventListener("input", () => {
 });
 exampleSelect.addEventListener("change", () => {
   pattern.value = EXAMPLES[exampleSelect.value]!;
-  // CrochetPARADE's examples choose their own look; M0's flat swatch is 2D.
-  dimensionSelect.value = exampleSelect.value.includes("2D") ? "2" : "3";
+  const name = exampleSelect.value;
+  dimensionSelect.value = name.includes("2D") || FLAT_EXAMPLES.has(name) ? "2" : "3";
   validateNow();
 });
 dimensionSelect.addEventListener("change", validateNow);
@@ -126,6 +134,7 @@ dimensionSelect.addEventListener("change", validateNow);
 layoutButton.addEventListener("click", async () => {
   if (!latest?.ok || !latestGraph) return;
   const graph = latestGraph;
+  const transforms = readObjectTransforms(latestText);
   cancelButton.disabled = false;
   layoutButton.disabled = true;
   progressEl.value = 0;
@@ -156,7 +165,8 @@ layoutButton.addEventListener("click", async () => {
           fold.seedsTried.length > 1 ? `, tried seeds ${fold.seedsTried.join(", ")}` : ""
         }`;
     layoutInfo.textContent = `${graph.stitches.length} stitches, ${Object.keys(result.positions).length} nodes in ${result.ms} ms, seed ${result.seed}, ${result.attempts} attempt(s), final error ${result.finalError?.toFixed(3)}${foldNote}`;
-    view.setModel(graph, result);
+    // Pieces the pattern moves apart with TRANSFORM_OBJECT:, as crochetparade.org draws them.
+    view.setModel(graph, { ...result, positions: applyObjectTransforms(graph, result.positions, transforms) });
   } catch (error) {
     layoutInfo.textContent = error instanceof LayoutCancelled ? "cancelled" : `failed: ${(error as Error).message}`;
   } finally {
