@@ -1,6 +1,7 @@
 // Node-only entry point: hosts that load the vendored CrochetPARADE files with `vm`.
 
 export {
+  builtinStitches,
   bundledExamples,
   createNodeParserHost,
   createNodeValidator,

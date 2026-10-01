@@ -4,6 +4,8 @@
   "type": "module",
   "license": "GPL-3.0-or-later",
   "dependencies": {
-    "@crochet-model/core": "*"
+    "@crochet-model/core": "*",
+    "@crochet-model/translator": "*",
+    "@anthropic-ai/sdk": "^0.131.0"
   }
 }

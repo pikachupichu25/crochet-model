@@ -2,6 +2,7 @@
 // EvalItems, so every translator and metric sees the same shape.
 
 import { readFileSync } from "node:fs";
+import { statedCount } from "@crochet-model/core";
 import { dataPath } from "./sources.ts";
 
 export type DatasetName = "stitchswitch" | "crochetbench-step" | "crochetbench-project";
@@ -200,26 +201,4 @@ export function loadCrochetBenchProject(records: unknown): EvalItem[] {
         ]
       : [],
   );
-}
-
-// --- Stated counts --------------------------------------------------------
-
-/**
- * The stitch count an instruction ends with: `Turn. 15 sts.`, `(18)`,
- * `[18 sts]`, `turn—18 sc`. Counts listing several kinds (`106 sc, 52 ch-1 sps`)
- * or sizes (`3 (4, 4) sc`) are not read; an unread count stays undefined.
- */
-export function statedCount(english: string): number | undefined {
-  const tail = english.trim().replace(/[.;\s]+$/, "");
-  const forms = [
-    // Its own sentence, or after a dash: not the last stitch of "…, 2 dc".
-    /(?:^|[.—–]\s*|\s-\s*)(\d+)\s+(?:sts?|stitches|sc|hdc|dc|tr)$/i,
-    /\((\d+)(?:\s+(?:sts?|stitches|sc|hdc|dc|tr))?\)$/i,
-    /\[(\d+)(?:\s+(?:sts?|stitches|sc|hdc|dc|tr))?\]$/i,
-  ];
-  for (const re of forms) {
-    const m = re.exec(tail);
-    if (m) return Number(m[1]);
-  }
-  return undefined;
 }

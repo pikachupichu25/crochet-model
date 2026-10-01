@@ -53,6 +53,8 @@ export {
   type StitchGraph,
 } from "./cp/graph.ts";
 export { canonicalRows, compareStructure, type StructureMatch } from "./cp/compare.ts";
+export { segmentPattern, statedCount } from "./segment.ts";
+export type * from "./types.ts";
 export { mapRowsToLines } from "./cp/sourceLines.ts";
 export {
   applyObjectTransforms,

@@ -4,7 +4,6 @@ import {
   loadStitchSwitch,
   parseCsv,
   parseStepPrompt,
-  statedCount,
 } from "../src/datasets.ts";
 
 describe("parseCsv", () => {
@@ -79,27 +78,5 @@ describe("parseStepPrompt", () => {
       english: "sc across. 3 sts.",
       statedCount: 3,
     });
-  });
-});
-
-describe("statedCount", () => {
-  it.each([
-    ["2nd rnd: 2 sc in each sc around. 12 sts.", 12],
-    ["1st row: 1 hdc in each ch to end. Turn. 15 sts", 15],
-    ["Rnd 3: *sc, inc* around (18)", 18],
-    ["Rnd 3: *sc, inc* around [18 sts]", 18],
-    ["Row 1: sc across; turn—18 sc.", 18],
-    ["6 sc in 2nd ch from hook. 6 sc.", 6],
-  ])("reads %j", (text, count) => {
-    expect(statedCount(text)).toBe(count);
-  });
-
-  it.each([
-    "Row 2: Ch 1, sc in each st across. Turn.",
-    "Row 1: sc in next st, 2 dc",
-    "Row 1: sc across; turn—3 (4, 4) sc.",
-    "1st row: … Turn. 106 sc, 52 ch-1 sps and 2 dc.",
-  ])("leaves %j unread", (text) => {
-    expect(statedCount(text)).toBeUndefined();
   });
 });

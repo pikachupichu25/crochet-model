@@ -68,3 +68,10 @@ export function bundledExamples(
   }
   return examples;
 }
+
+/** Names of the stitches built into parse64.js (its `Dictionary`), in its order. */
+export function builtinStitches(parserPath: string = DEFAULT_PARSER_PATH): string[] {
+  const context = vm.createContext({ console: silentConsole, alert: silent });
+  new vm.Script(readFileSync(parserPath, "utf8")).runInContext(context);
+  return Object.keys((context as { Dictionary?: object }).Dictionary ?? {});
+}

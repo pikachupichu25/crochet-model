@@ -10,6 +10,7 @@ import {
   type ValidationResult,
 } from "@crochet-model/core";
 import { createNodeValidator } from "@crochet-model/core/node";
+import { countMatches, lastRowCount } from "@crochet-model/translator";
 import { chrF } from "./chrf.ts";
 import type { EvalItem } from "./datasets.ts";
 import { codeOnly } from "./rules.ts";
@@ -85,8 +86,9 @@ export function scoreItem(item: EvalItem, output: string): ItemScore {
           };
     }
   } else if (item.statedCount !== undefined) {
-    const last = result?.ok ? result.rows[result.rows.length - 1] : undefined;
-    score.counts = { checked: 1, matched: last?.stitches === item.statedCount ? 1 : 0 };
+    // The translator's rule: allow for a beginning chain the English does not count.
+    const matched = !!result?.ok && countMatches(lastRowCount(result), item.statedCount);
+    score.counts = { checked: 1, matched: matched ? 1 : 0 };
   }
   return score;
 }

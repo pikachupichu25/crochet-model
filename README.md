@@ -2,7 +2,7 @@
 
 Turn a crochet pattern written in ordinary English into [CrochetPARADE](https://www.crochetparade.org/) code with an LLM, check it with the CrochetPARADE parser, and show it as a 3D model that looks like real yarn.
 
-Status: early. The pattern validator, the layout solver (in Web Workers), a ball-and-stick structure view and the evaluation harness, with scores for CrochetPARADE's rule-based translator, are built. LLM translation and the yarn renderer are not built yet.
+Status: early. The pattern validator, the layout solver (in Web Workers), a ball-and-stick structure view, the evaluation harness (with scores for CrochetPARADE's rule-based translator) and the LLM translation loop are built. The translator has not yet been scored against the API. The review UI and the yarn renderer are not built yet.
 
 ## Layout
 
@@ -10,6 +10,7 @@ Status: early. The pattern validator, the layout solver (in Web Workers), a ball
 docs/                   design docs (start with REQUIREMENTS.md, then SPEC.md)
 packages/core/          TypeScript core: validator, stitch graph, layout, CLI
 packages/app/           Vite web app: workers and 3D views
+packages/translator/    LLM translation loop: prompt, Claude API calls, validate and repair
 packages/eval/          evaluation harness: dataset loaders, baseline runs, metrics
 vendor/crochetparade/   pinned copy of the CrochetPARADE parser and solver (GPLv3)
 ```
@@ -48,6 +49,14 @@ Evaluate CrochetPARADE's rule-based translator (needs `python3`; see [SPEC.md §
 npm run eval -- fetch                                      # download the datasets (git-ignored)
 npm run eval -- run --translator rules --dataset all       # about 3 minutes
 npm run eval -- report packages/eval/runs/<run>
+```
+
+Evaluate the LLM translator (needs Anthropic credentials: `ANTHROPIC_API_KEY`, or `ant auth login`). Every run prints a cost estimate and refuses above US$5 unless you add `--yes`:
+
+```bash
+npm run eval -- run --translator llm --dataset stitchswitch --limit 5
+npm run eval -- run --translator llm --dataset stitchswitch --effort low --batch --yes
+npm run eval -- compare packages/eval/runs/<a> packages/eval/runs/<b>
 ```
 
 The datasets are for local evaluation only: StitchSwitch states no licence and CrochetBench data is CC BY-NC 4.0.

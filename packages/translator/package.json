@@ -1,0 +1,14 @@
+{
+  "name": "@crochet-model/translator",
+  "private": true,
+  "type": "module",
+  "license": "GPL-3.0-or-later",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.131.0",
+    "@crochet-model/core": "*",
+    "zod": "^4.6.5"
+  }
+}
