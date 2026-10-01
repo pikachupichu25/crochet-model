@@ -15,6 +15,7 @@ import { DATASETS, type DatasetName } from "./datasets.ts";
 import { fetchDatasets } from "./fetch.ts";
 import type { LlmConfig } from "./llm.ts";
 import { runEvaluation, type ItemRecord, type Translator } from "./run.ts";
+import { cleanSummary, suspectIds } from "./suspect.ts";
 import { itemChanges, markdownTable, type Summary } from "./summary.ts";
 
 const USAGE = `usage:
@@ -53,6 +54,25 @@ function readRun(dir: string): { summaries: Summary[]; records: ItemRecord[] } {
     .filter((l) => l.trim())
     .map((l) => JSON.parse(l) as ItemRecord);
   return { summaries, records };
+}
+
+/**
+ * A run's stored summaries per output, each followed by a clean summary
+ * computed now: the suspect list grows after runs, so a stored one may be out
+ * of date or missing.
+ */
+function withCurrentSuspects(run: ReturnType<typeof readRun>): Summary[] {
+  return run.summaries
+    .filter((s) => !s.excludedSuspect)
+    .flatMap((s) => {
+      let clean: Summary | undefined;
+      try {
+        clean = cleanSummary(s.dataset, s.output, run.records);
+      } catch {
+        // Runs from before M2 lack fields the summary needs; show what was stored.
+      }
+      return [s, ...(clean ? [clean] : [])];
+    });
 }
 
 switch (command) {
@@ -117,19 +137,20 @@ switch (command) {
 
   case "report": {
     if (args.length === 0) fail("no run directories given");
-    console.log(markdownTable(args.flatMap((dir) => readRun(dir).summaries)));
+    console.log(markdownTable(args.flatMap((dir) => withCurrentSuspects(readRun(dir)))));
     break;
   }
 
   case "compare": {
     if (args.length !== 2) fail("compare takes two run directories");
     const [a, b] = args.map(readRun) as [ReturnType<typeof readRun>, ReturnType<typeof readRun>];
-    console.log(markdownTable([...a.summaries, ...b.summaries]));
+    console.log(markdownTable([...withCurrentSuspects(a), ...withCurrentSuspects(b)]));
     // Item changes between the first output of each run.
+    const suspects = suspectIds(a.summaries[0]!.dataset);
     const changes = itemChanges(
       { output: a.summaries[0]!.output, records: a.records },
       { output: b.summaries[0]!.output, records: b.records },
-    );
+    ).map((line) => (suspects.has(line.slice(2, line.indexOf(":"))) ? `${line} (suspect gold)` : line));
     console.log(changes.length ? `\nChanged items:\n${changes.join("\n")}` : "\nNo item changed.");
     break;
   }

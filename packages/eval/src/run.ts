@@ -13,8 +13,9 @@
 //     items.jsonl     one line per item: the dataset item, the translator's
 //                     input, outputs, scores, row translations with attempts
 //     outputs/<output>/<item>.cp   each output as CrochetPARADE text
-//     summary.json    the aggregate metrics, one entry per output; `stopped`
-//                     when an error ended the run early
+//     summary.json    the aggregate metrics, one entry per output, and one
+//                     without suspect-gold items (gold-suspect.json) when any
+//                     ran; `stopped` when an error ended the run early
 //     summary.md      the same as a Markdown table
 //
 // Stitch graphs are not saved: they are large, and the vendored parser
@@ -54,7 +55,8 @@ import { costOf, priceOf } from "./pricing.ts";
 import { translateWithRules, type RulesOutput } from "./rules.ts";
 import { checkGold, scoreItem, type GoldCheck, type ItemScore } from "./score.ts";
 import { DATA_DIR, RUNS_DIR } from "./sources.ts";
-import { markdownTable, summarise, type Summary } from "./summary.ts";
+import { summariesWithClean } from "./suspect.ts";
+import { markdownTable, type Summary } from "./summary.ts";
 
 const { validate } = createNodeValidator();
 
@@ -210,7 +212,7 @@ export async function runEvaluation(options: RunOptions): Promise<{ dir: string;
 
   const order = new Map(items.map((item, i) => [item.id, i]));
   records.sort((a, b) => order.get(a.id)! - order.get(b.id)!);
-  const summaries = outputs.map((output) => summarise(options.dataset, output, records));
+  const summaries = summariesWithClean(options.dataset, outputs, records);
   writeFileSync(
     `${dir}summary.json`,
     `${JSON.stringify({ ...config, finishedAt: new Date().toISOString(), ...(stopped ? { stopped } : {}), ...(batches ? { batches } : {}), summaries }, null, 2)}\n`,

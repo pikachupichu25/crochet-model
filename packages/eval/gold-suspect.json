@@ -1,0 +1,41 @@
+{
+  "about": "Dataset items whose gold CrochetPARADE looks wrong (docs/SPEC.md §7.1). Runs report their metrics with and without these items. Entries describe the problem in our own words and point to rows; they never copy dataset text (StitchSwitch has no licence). Rows count from 1, as the English labels them. Status: suspected (our reading), confirmed (by the dataset authors), rejected (the gold was right).",
+  "items": [
+    {
+      "dataset": "stitchswitch",
+      "id": "ss-011",
+      "rows": [3],
+      "status": "suspected",
+      "issue": "The gold's third row makes twice the stitches the English asks for.",
+      "evidence": "The English works two trebles into each of the 6 stitches of row 2: 12 stitches. The gold repeats a two-stitch increase group 6 times over those 6 stitches, which the parser counts as 24. A plain 6-times treble increase gives the 12 the English describes.",
+      "found": "2026-10-01, run 20261001-044833-llm-stitchswitch (Claude Code haiku)"
+    },
+    {
+      "dataset": "stitchswitch",
+      "id": "ss-013",
+      "rows": [3, 4, 5, 6],
+      "status": "suspected",
+      "issue": "The gold's third row makes one stitch more than the row it is worked into allows.",
+      "evidence": "Row 2 has 5 stitches. Row 3 starts at the third of them, so after skipping 2 there are 3 left, but the gold works 4. Rows 4 to 6 then inherit the extra stitch and their positions shift; their gold differs from a correct translation only because of row 3.",
+      "found": "2026-10-01, run 20261001-044833-llm-stitchswitch (Claude Code haiku)"
+    },
+    {
+      "dataset": "stitchswitch",
+      "id": "ss-016",
+      "rows": [1, 2],
+      "status": "suspected",
+      "issue": "The gold's chain ring is not closed as CrochetPARADE closes one.",
+      "evidence": "The English joins a 2-chain with a slip stitch into the first chain to make a ring. The gold slips into stitch 1 of the row (the chain just made) and puts the ring label on a group that includes the slip stitch, so the ring is one chain long and the next round works into the slip stitch too. Every chain ring among CrochetPARADE's built-in examples labels the chains and slips into stitch 0 (the first chain made). Ambiguity: 'first ch' could in principle be counted from the hook.",
+      "found": "2026-10-01, run 20261001-044833-llm-stitchswitch (Claude Code haiku)"
+    },
+    {
+      "dataset": "stitchswitch",
+      "id": "ss-019",
+      "rows": [1, 2],
+      "status": "suspected",
+      "issue": "Same chain-ring form as ss-016.",
+      "evidence": "Same English and same gold construction as ss-016; see there.",
+      "found": "2026-10-01, run 20261001-044833-llm-stitchswitch (Claude Code haiku)"
+    }
+  ]
+}

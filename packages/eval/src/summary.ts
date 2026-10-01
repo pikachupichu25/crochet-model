@@ -28,6 +28,8 @@ export interface Summary {
   costUsd?: number;
   requestsPerItem?: number;
   questions?: { asked: number; answered: number };
+  /** Set on a clean summary: the suspect-gold items it leaves out (suspect.ts). */
+  excludedSuspect?: string[];
 }
 
 const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : undefined);
