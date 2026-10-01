@@ -256,6 +256,28 @@ describe("translateWhole", () => {
     expect(Object.values(pattern.translations).map((t) => t.status)).toEqual(["valid", "valid"]);
   });
 
+  it("asks for every row again after an unusable response", async () => {
+    const { rows } = input("Row 1: Ch 5.\nRow 2: Sc across. (4)");
+    const model = new Scripted([
+      { ...reply({ rows: [], assumptions: [] }), text: "{\"rows\": [", stopReason: "max_tokens" },
+      reply({ rows: [{ rowId: rows[0]!.id, cp: "5ch,turn" }, { rowId: rows[1]!.id, cp: "sk,4sc" }], assumptions: [] }),
+    ]);
+    const { pattern } = await translateWhole({ english: "", rows, notes: [] }, options(model));
+    const repair = model.requests[1]!.messages.at(-1)!.content as string;
+    expect(repair).toContain("cut off at the token limit");
+    expect(repair).toContain("for every row");
+    expect(assemble(pattern)).toBe("5ch,turn\nsk,4sc");
+  });
+
+  it("does not blame a stated count on an earlier row's stitches", async () => {
+    const { rows } = input("Row 1: Ch 5.\nRow 2: Sc across, turn.\nRow 3: Fasten off. (7)");
+    const model = new Scripted([
+      reply({ rows: [{ rowId: rows[0]!.id, cp: "5ch,turn" }, { rowId: rows[1]!.id, cp: "sk,4sc,turn" }, { rowId: rows[2]!.id, cp: "" }], assumptions: [] }),
+    ]);
+    await translateWhole({ english: "", rows, notes: [] }, options(model));
+    expect(model.requests).toHaveLength(1);
+  });
+
   it("keeps the best attempt when later repairs get worse", async () => {
     const { rows } = input("Row 1: Ch 5.\nRow 2: Sc across. (4)");
     const whole = (cp2: string) =>

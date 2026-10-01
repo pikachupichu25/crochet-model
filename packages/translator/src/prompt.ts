@@ -178,6 +178,7 @@ export function amendmentRepair(rowId: string, why: string, target: PatternRow):
   );
 }
 
-export function formatRepair(why: string): string {
-  return `Your response could not be used: ${why}. Return the response for the same row again.`;
+export function formatRepair(why: string, whole = false): string {
+  const what = whole ? "the response for every row, in one response" : "the response for the same row";
+  return `Your response could not be used: ${why}. Return ${what} again.`;
 }

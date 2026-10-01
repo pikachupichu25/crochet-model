@@ -456,8 +456,9 @@ class PatternTranslator {
       }
       const parsed = safeJson(reply.text, WholeResponse);
       if (!parsed.ok) {
-        attempts.push({ cp: "", validation: failed(parsed.why), model: reply.model, usage: reply.usage, rejected: "unusable response" });
-        messages.push({ role: "user", content: formatRepair(parsed.why) });
+        const why = reply.stopReason === "max_tokens" ? "it was cut off at the token limit" : parsed.why;
+        attempts.push({ cp: "", validation: failed(why), model: reply.model, usage: reply.usage, rejected: "unusable response" });
+        messages.push({ role: "user", content: formatRepair(why, true) });
         continue;
       }
       const cps = new Map(parsed.value.rows.map((r) => [r.rowId, r.cp.trim()]));
@@ -514,10 +515,25 @@ class PatternTranslator {
   private wholeCountMismatches(cps: Map<string, string>): string[] {
     const out: string[] = [];
     const parts: string[] = [];
+    // Parser rows before the current row. Only rows with a stated count are
+    // validated, so after unchecked rows with stitches it is recounted.
     let rowsBefore = 0;
+    let stale = false;
     for (const row of this.input.rows) {
-      parts.push(this.input.given?.[row.id] ?? cps.get(row.id) ?? "");
-      if (row.statedCount === undefined || this.input.given?.[row.id] !== undefined) continue;
+      const cp = this.input.given?.[row.id] ?? cps.get(row.id) ?? "";
+      if (row.statedCount === undefined || this.input.given?.[row.id] !== undefined) {
+        parts.push(cp);
+        if (cp.trim()) stale = true;
+        continue;
+      }
+      // A row that makes no stitches passes, as in row mode.
+      if (!cp.trim()) continue;
+      if (stale) {
+        const before = this.o.validate(joinCp(parts));
+        if (before.ok) rowsBefore = before.rows.length;
+        stale = false;
+      }
+      parts.push(cp);
       const result = this.o.validate(joinCp(parts));
       if (!result.ok) continue;
       if (result.rows.length > rowsBefore) {
