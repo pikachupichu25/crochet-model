@@ -33,6 +33,8 @@ export interface OfferedModel {
   price: Price | null;
   recommended: boolean;
   evaluated: boolean;
+  /** Costs nothing (OpenRouter's ":free" models and US$0 prices). */
+  free: boolean;
 }
 
 export interface SessionUser {
@@ -129,7 +131,15 @@ export const auth = {
 
 // --- Keys, models and settings ------------------------------------------------
 
+export interface Health {
+  promptVersion: string;
+  crochetparade: string;
+  /** Providers with a development key on the server (from .env.local); never the key. */
+  serverKeys: ProviderId[];
+}
+
 export const api = {
+  health: () => call<Health>("/api/health"),
   models: (provider: ProviderId, key?: string) =>
     call<{ models: OfferedModel[]; default: string | null }>(`/api/models/${provider}`, { key }),
   keys: () => call<{ keys: SavedKey[]; emailVerified: boolean }>("/api/keys"),

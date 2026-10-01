@@ -4,6 +4,7 @@ import { ModelError, type ModelReply, type ModelRequest, type TranslatorModel } 
 import { beforeEach, describe, expect, it } from "vitest";
 import { createApp, jsonLogger, type Providers } from "../src/app.ts";
 import { createAuth } from "../src/auth.ts";
+import { loadConfig } from "../src/config.ts";
 import { KeyRing, parseMasterKeys, redact, scrub } from "../src/keys.ts";
 import { TranslationLimits } from "../src/limits.ts";
 import { ConsoleMailer } from "../src/mail.ts";
@@ -41,12 +42,14 @@ function fakeProviders(seen: { keys: string[]; requests: ModelRequest[] }): Prov
         { id: "fake-model", structuredOutput: true },
         { id: "claude-opus-5-5", structuredOutput: true },
         { id: "no-schema-model", structuredOutput: false },
+        { id: "vendor/small:free", structuredOutput: true },
+        { id: "vendor/zero-priced", structuredOutput: true, price: { input: 0, output: 0 } },
       ];
     },
   };
 }
 
-async function setup() {
+async function setup(serverKeys: Partial<Record<"anthropic" | "openrouter" | "gemini" | "openai", string>> = {}) {
   const db = new Database(":memory:");
   const mailer = new ConsoleMailer(() => {});
   const auth = await createAuth({ db, appOrigin: ORIGIN, secret: randomBytes(32).toString("base64"), mailer, rateLimit: false });
@@ -54,7 +57,7 @@ async function setup() {
   const logs: string[] = [];
   const seen = { keys: [] as string[], requests: [] as ModelRequest[] };
   const app = createApp({
-    config: { appOrigin: ORIGIN, keyRing: parseMasterKeys(randomBytes(32).toString("base64")), maxConcurrent: 2, maxPerWindow: 30, maxRows: 300 },
+    config: { appOrigin: ORIGIN, keyRing: parseMasterKeys(randomBytes(32).toString("base64")), maxConcurrent: 2, maxPerWindow: 30, maxRows: 300, serverKeys },
     auth,
     store,
     log: jsonLogger((line) => logs.push(line)),
@@ -231,7 +234,8 @@ describe("server", () => {
   it("lists models the key can use, schema-capable only, default first", async () => {
     const res = await s.request("/api/models/anthropic", { headers: { "x-provider-key": GOOD_KEY } });
     const body = (await res.json()) as { models: { id: string; recommended: boolean; price: unknown }[] };
-    expect(body.models.map((m) => m.id)).toEqual(["claude-opus-5-5", "fake-model"]);
+    expect(body.models.map((m) => m.id)).toEqual(["claude-opus-5-5", "fake-model", "vendor/small:free", "vendor/zero-priced"]);
+    expect(body.models.filter((m) => (m as { free?: boolean }).free).map((m) => m.id)).toEqual(["vendor/small:free", "vendor/zero-priced"]);
     expect(body.models[0]!.recommended).toBe(true);
     expect(body.models[0]!.price).toMatchObject({ input: 4 });
     const bad = await s.request("/api/models/anthropic", { headers: { "x-provider-key": "bad-key-12345678" } });
@@ -324,5 +328,48 @@ describe("server", () => {
     if ("release" in b) b.release();
     expect(limits.acquire("ip")).toEqual({ refused: "rate_limited" });
     expect("release" in limits.acquire("other ip")).toBe(true);
+  });
+});
+
+describe("development keys from the environment", () => {
+  const SERVER_KEY = "sk-or-server-dev-key-5566778899";
+
+  it("are read in development and ignored in production", () => {
+    const secrets = { KEY_ENCRYPTION_KEY: randomBytes(32).toString("base64"), BETTER_AUTH_SECRET: "x".repeat(32) };
+    const dev = loadConfig({ ...secrets, OPENROUTER_API_KEY: ` ${SERVER_KEY} `, GEMINI_API_KEY: "" });
+    expect(dev.serverKeys).toEqual({ openrouter: SERVER_KEY });
+    const prod = loadConfig({ ...secrets, NODE_ENV: "production", OPENROUTER_API_KEY: SERVER_KEY });
+    expect(prod.serverKeys).toEqual({});
+  });
+
+  it("are used when the browser sends no key, and named but never shown", async () => {
+    const s = await setup({ openrouter: SERVER_KEY });
+    const health = await (await s.request("/api/health")).text();
+    expect(JSON.parse(health).serverKeys).toEqual(["openrouter"]);
+    expect(health).not.toContain(SERVER_KEY.slice(-8));
+
+    const models = await s.request("/api/models/openrouter");
+    expect(models.status).toBe(200);
+    expect(await models.text()).not.toContain(SERVER_KEY.slice(-8));
+    expect((await s.request("/api/models/gemini")).status).toBe(409);
+
+    const evs = await events(
+      await s.request("/api/translate", { method: "POST", body: JSON.stringify({ english: PATTERN, provider: "openrouter", model: "fake-model", cache: false }) }),
+    );
+    expect(evs.at(-1)![0]).toBe("done");
+    expect(s.seen.keys).toEqual([SERVER_KEY, SERVER_KEY]);
+    expect(s.logs.join("\n")).not.toContain(SERVER_KEY.slice(-8));
+  });
+
+  it("come after a key the browser sends and a key the user saved", async () => {
+    const s = await setup({ anthropic: SERVER_KEY });
+    await events(await s.request("/api/translate", { method: "POST", headers: { "x-provider-key": GOOD_KEY }, body: JSON.stringify({ english: PATTERN, cache: false }) }));
+    expect(s.seen.keys).toEqual([GOOD_KEY]);
+
+    const cookie = await s.signUp("kp@example.com");
+    await s.request("/api/keys/anthropic", { method: "PUT", cookie, body: JSON.stringify({ key: OTHER_KEY }) });
+    s.seen.keys.length = 0;
+    await events(await s.request("/api/translate", { method: "POST", cookie, body: JSON.stringify({ english: PATTERN, cache: false }) }));
+    expect(s.seen.keys).toEqual([OTHER_KEY]);
   });
 });

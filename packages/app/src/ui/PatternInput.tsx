@@ -25,6 +25,15 @@ const PROVIDERS: ProviderId[] = ["anthropic", "openrouter", "gemini", "openai"];
 const EFFORTS: Effort[] = ["low", "medium", "high", "xhigh", "max"];
 /** Estimated above this, a translation asks first (SPEC §8.4). */
 const CONFIRM_ABOVE_USD = 1;
+const FREE_ONLY_KEY = "crochet-model:openrouter-free-only";
+
+function readFreeOnly(): boolean {
+  try {
+    return localStorage.getItem(FREE_ONLY_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
 
 export function PatternInput({ onSignIn, onReview }: { onSignIn: () => void; onReview: () => void }) {
   const english = useApp((s) => s.english);
@@ -186,7 +195,26 @@ function ModelPicker({ models, setModels, onSignIn }: { models: OfferedModel[]; 
   const [draft, setDraft] = useState(guestKey);
   const [status, setStatus] = useState<{ kind: "idle" | "checking" | "ok" | "bad"; text?: string }>({ kind: "idle" });
   const [saving, setSaving] = useState(false);
-  const keySource = guestKey ? "guest" : saved ? "saved" : undefined;
+  const fromServer = s.serverKeys.includes(provider);
+  // The same order the server uses: typed, then saved, then .env.local.
+  const keySource = guestKey ? "guest" : saved ? "saved" : fromServer ? "server" : undefined;
+  // OpenRouter lists hundreds of models; this narrows them to the free ones.
+  const [freeOnlyChoice, setFreeOnlyChoice] = useState(readFreeOnly);
+  const freeOnly = provider === "openrouter" && freeOnlyChoice;
+  const shown = useMemo(() => (freeOnly ? models.filter((m) => m.free) : models), [models, freeOnly]);
+  const toggleFreeOnly = (on: boolean) => {
+    setFreeOnlyChoice(on);
+    try {
+      localStorage.setItem(FREE_ONLY_KEY, on ? "1" : "0");
+    } catch {
+      // Not remembered; the filter still works for this visit.
+    }
+  };
+
+  // Keep the chosen model among the ones shown.
+  useEffect(() => {
+    if (shown.length && !shown.some((m) => m.id === s.model)) setTranslationSettings({ model: shown[0]!.id });
+  }, [shown, s.model]);
 
   useEffect(() => setDraft(s.keys[provider] ?? ""), [provider, s.keys]);
 
@@ -219,8 +247,9 @@ function ModelPicker({ models, setModels, onSignIn }: { models: OfferedModel[]; 
     };
   }, [provider, guestKey, keySource, setModels]);
 
-  const recommended = models.filter((m) => m.recommended);
-  const others = useMemo(() => models.filter((m) => !m.recommended), [models]);
+  const recommended = shown.filter((m) => m.recommended);
+  const others = useMemo(() => shown.filter((m) => !m.recommended), [shown]);
+  const optionLabel = (m: OfferedModel) => (m.free && !freeOnly ? `${m.id} · free` : m.id);
   const chosen = models.find((m) => m.id === s.model);
 
   const saveToAccount = async () => {
@@ -263,7 +292,7 @@ function ModelPicker({ models, setModels, onSignIn }: { models: OfferedModel[]; 
             autoComplete="off"
             spellCheck={false}
             value={draft}
-            placeholder={saved ? `saved key ••••${saved.last4}` : "paste your key"}
+            placeholder={saved ? `saved key ••••${saved.last4}` : fromServer ? "using the key in .env.local" : "paste your key"}
             onChange={(e) => setDraft(e.target.value)}
             onBlur={() => setGuestKey(provider, draft)}
             onKeyDown={(e) => e.key === "Enter" && setGuestKey(provider, draft)}
@@ -272,13 +301,13 @@ function ModelPicker({ models, setModels, onSignIn }: { models: OfferedModel[]; 
 
         <label className="field">
           <span>Model</span>
-          <select value={s.model ?? ""} disabled={models.length === 0} onChange={(e) => setTranslationSettings({ model: e.target.value })}>
-            {models.length === 0 && <option value="">{s.model ?? "—"}</option>}
+          <select value={s.model ?? ""} disabled={shown.length === 0} onChange={(e) => setTranslationSettings({ model: e.target.value })}>
+            {shown.length === 0 && <option value="">{models.length && freeOnly ? "no free model" : (s.model ?? "—")}</option>}
             {recommended.length > 0 && (
               <optgroup label="Recommended">
                 {recommended.map((m) => (
                   <option key={m.id} value={m.id}>
-                    {m.id}
+                    {optionLabel(m)}
                   </option>
                 ))}
               </optgroup>
@@ -287,7 +316,7 @@ function ModelPicker({ models, setModels, onSignIn }: { models: OfferedModel[]; 
               <optgroup label="Not evaluated">
                 {others.map((m) => (
                   <option key={m.id} value={m.id}>
-                    {m.id}
+                    {optionLabel(m)}
                   </option>
                 ))}
               </optgroup>
@@ -307,10 +336,31 @@ function ModelPicker({ models, setModels, onSignIn }: { models: OfferedModel[]; 
 
       <p className={`key-status ${status.kind}`} aria-live="polite">
         {status.kind === "checking" && "Checking the key…"}
-        {status.kind === "ok" && (keySource === "saved" ? `Using your saved key ••••${saved!.last4}.` : "Key accepted. Kept in this tab only, forgotten on reload.")}
+        {status.kind === "ok" &&
+          (keySource === "saved"
+            ? `Using your saved key ••••${saved!.last4}.`
+            : keySource === "server"
+              ? "Using the development key from .env.local on the server. Paste a key to use another."
+              : "Key accepted. Kept in this tab only, forgotten on reload.")}
         {status.kind === "bad" && status.text}
         {status.kind === "idle" && "Your key goes to our server with each request and is never stored, unless you save it to an account."}
       </p>
+      {provider === "openrouter" && (
+        <label className="check free-only">
+          <input type="checkbox" checked={freeOnlyChoice} onChange={(e) => toggleFreeOnly(e.target.checked)} />
+          <span>
+            Free models only
+            <small>
+              {models.length === 0
+                ? "OpenRouter's free models, once the key is checked."
+                : `${models.filter((m) => m.free).length} of ${models.length} models are free. Free models are rate limited and may log prompts.`}
+            </small>
+          </span>
+        </label>
+      )}
+      {freeOnly && models.length > 0 && shown.length === 0 && (
+        <p className="hint warn-text">None of OpenRouter’s free models can return structured output right now, so none can translate.</p>
+      )}
       {chosen && !chosen.recommended && (
         <p className="hint warn-text">This model has not been evaluated with this app. Translations may be less accurate.</p>
       )}

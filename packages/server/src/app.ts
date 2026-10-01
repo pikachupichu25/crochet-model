@@ -41,7 +41,7 @@ export interface Providers {
 export type Logger = (event: string, fields?: Record<string, unknown>) => void;
 
 export interface AppDeps {
-  config: Pick<ServerConfig, "appOrigin" | "keyRing" | "maxConcurrent" | "maxPerWindow" | "maxRows">;
+  config: Pick<ServerConfig, "appOrigin" | "keyRing" | "maxConcurrent" | "maxPerWindow" | "maxRows"> & Partial<Pick<ServerConfig, "serverKeys">>;
   auth: Auth;
   store: Store;
   log: Logger;
@@ -112,6 +112,9 @@ interface KeyInUse {
   saved: boolean;
 }
 
+/** Where the key for a provider comes from, as the app is told (never the key itself). */
+export type KeySource = "header" | "saved" | "server";
+
 const MODEL_LIST_TTL_MS = 60 * 60_000;
 const VENDOR_COMMIT = readFileSync(`${VENDOR_DIR}/COMMIT`, "utf8").trim();
 
@@ -159,19 +162,24 @@ export function createApp(deps: AppDeps) {
   const requireUser = (c: Context<{ Variables: { user: SessionUser | undefined } }>) => c.get("user");
 
   /** The key for this request (§8): the header first, then the user's saved key. */
+  /**
+   * The key for this request (§8): the header first, then the user's saved
+   * key, then the server's development key for the provider (config.ts).
+   */
   const keyFor = (c: Context<{ Variables: { user: SessionUser | undefined } }>, provider: AppProviderId): KeyInUse | undefined => {
     const header = c.req.header("x-provider-key")?.trim();
     if (header) return { key: header, saved: false };
     const user = c.get("user");
-    if (!user) return undefined;
-    const row = store.getKey(user.id, provider);
-    if (!row || row.status === "invalid") return undefined;
-    try {
-      return { key: config.keyRing.open(row, user.id, provider), saved: true };
-    } catch {
-      log("key_decrypt_failed", { provider });
-      return undefined;
+    const row = user ? store.getKey(user.id, provider) : undefined;
+    if (user && row && row.status !== "invalid") {
+      try {
+        return { key: config.keyRing.open(row, user.id, provider), saved: true };
+      } catch {
+        log("key_decrypt_failed", { provider });
+      }
     }
+    const server = config.serverKeys?.[provider];
+    return server ? { key: server, saved: false } : undefined;
   };
 
   /** A provider error as the app sees it, with the key scrubbed from the message. */
@@ -190,6 +198,8 @@ export function createApp(deps: AppDeps) {
       crochetparade: VENDOR_COMMIT,
       providers: PROVIDERS,
       defaults: DEFAULT_MODELS,
+      /** Providers with a development key on the server: names only. */
+      serverKeys: PROVIDERS.filter((p) => config.serverKeys?.[p]),
     }),
   );
 
@@ -221,12 +231,17 @@ export function createApp(deps: AppDeps) {
     // every model is "not evaluated"; the default comes first.
     const offered = models
       .filter((m) => m.structuredOutput)
-      .map((m) => ({
-        id: m.id,
-        price: priceOf(provider, m.id, m.price) ?? null,
-        recommended: m.id === defaultModel,
-        evaluated: false,
-      }))
+      .map((m) => {
+        const price = priceOf(provider, m.id, m.price) ?? null;
+        return {
+          id: m.id,
+          price,
+          recommended: m.id === defaultModel,
+          evaluated: false,
+          // OpenRouter marks free variants ":free" and lists them at US$0.
+          free: m.id.endsWith(":free") || (price !== null && price.input === 0 && price.output === 0),
+        };
+      })
       .sort((a, b) => Number(b.recommended) - Number(a.recommended) || a.id.localeCompare(b.id));
     return c.json({ provider, models: offered, default: defaultModel ?? null });
   });

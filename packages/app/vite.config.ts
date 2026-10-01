@@ -12,8 +12,9 @@ export default defineConfig({
     // The workers import the vendored CrochetPARADE files from the repo root.
     fs: { allow: [repoRoot] },
     // The API server (npm run server). One origin for the app and the API, so
-    // the session cookie and the CSRF origin check need no CORS.
-    proxy: { "/api": "http://127.0.0.1:5181" },
+    // the session cookie and the CSRF origin check need no CORS. API_PORT
+    // points a second copy at a second server.
+    proxy: { "/api": `http://127.0.0.1:${process.env.API_PORT ?? 5181}` },
   },
   worker: { format: "es" },
   build: {

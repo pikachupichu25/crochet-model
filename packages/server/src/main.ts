@@ -2,8 +2,9 @@
 // the Vite dev server proxies /api here, so the app and the API share an
 // origin and the session cookie.
 
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { serve } from "@hono/node-server";
 import Database from "better-sqlite3";
 import { createApp, jsonLogger } from "./app.ts";
@@ -11,6 +12,10 @@ import { createAuth } from "./auth.ts";
 import { loadConfig } from "./config.ts";
 import { ConsoleMailer } from "./mail.ts";
 import { Store } from "./store.ts";
+
+// Development keys and settings (config.ts). Variables already set win.
+const envFile = fileURLToPath(new URL("../../../.env.local", import.meta.url));
+if (process.env.NODE_ENV !== "production" && existsSync(envFile)) process.loadEnvFile(envFile);
 
 const config = loadConfig();
 if (config.production) {
@@ -27,4 +32,6 @@ const app = createApp({ config, auth, store, log: jsonLogger() });
 
 serve({ fetch: app.fetch, port: config.port, hostname: "127.0.0.1" }, ({ port }) => {
   console.log(`API on http://127.0.0.1:${port} for ${config.appOrigin}`);
+  const withKeys = Object.keys(config.serverKeys);
+  if (withKeys.length) console.log(`Development keys from the environment for: ${withKeys.join(", ")}`);
 });

@@ -4,7 +4,7 @@
 
 import { useEffect, useState } from "react";
 import { runCheck } from "../check.ts";
-import { refreshSession, signOut, useApp } from "../store.ts";
+import { refreshServerKeys, refreshSession, signOut, useApp } from "../store.ts";
 import { AuthDialog, SettingsDialog, type AuthMode } from "./Account.tsx";
 import { ModelPanel } from "./ModelPanel.tsx";
 import { PatternInput } from "./PatternInput.tsx";
@@ -22,6 +22,7 @@ export function App() {
 
   useEffect(() => {
     void refreshSession();
+    void refreshServerKeys();
     void runCheck();
     // Links from verification and reset emails come back here.
     const q = new URLSearchParams(location.search);

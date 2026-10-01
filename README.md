@@ -37,7 +37,7 @@ npm test             # unit tests
 npm run typecheck
 ```
 
-The samples work without the server or a key. Translating needs the server and an API key for one of the providers; accounts are optional and only save keys and settings. In development the server keeps its SQLite file and generated secrets in `packages/server/data/` (git-ignored) and prints verification and password-reset links to its output instead of sending mail. See [SPEC.md §8](docs/SPEC.md) for `KEY_ENCRYPTION_KEY`, `BETTER_AUTH_SECRET` and the other settings.
+The samples work without the server or a key. For development, provider keys in `.env.local` at the repo root (`ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`, `GEMINI_API_KEY`, `OPENAI_API_KEY`) are used by the server whenever the browser sends no key and the signed-in user has saved none; the browser only learns which providers have one. The server ignores them with `NODE_ENV=production`. Translating needs the server and an API key for one of the providers; accounts are optional and only save keys and settings. In development the server keeps its SQLite file and generated secrets in `packages/server/data/` (git-ignored) and prints verification and password-reset links to its output instead of sending mail. See [SPEC.md §8](docs/SPEC.md) for `KEY_ENCRYPTION_KEY`, `BETTER_AUTH_SECRET` and the other settings.
 
 Validate a CrochetPARADE pattern from the command line:
 

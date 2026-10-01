@@ -7,6 +7,11 @@
 //   KEY_ENCRYPTION_KEY   master key(s) for saved provider keys (keys.ts)
 //   BETTER_AUTH_SECRET   signs session cookies
 //   NODE_ENV             "production" requires both secrets and a mail transport
+//   ANTHROPIC_API_KEY, OPENROUTER_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY
+//                        development only: the provider's key when the browser
+//                        sends none and the user has saved none. main.ts reads
+//                        them from .env.local in the repo root. Ignored in
+//                        production, where they would let any visitor spend them.
 //
 // In development a missing secret is generated once and kept in
 // data/dev-secrets.json (git-ignored), so saved keys survive restarts.
@@ -15,6 +20,7 @@ import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { API_KEY_ENV, PROVIDERS, type AppProviderId } from "@crochet-model/translator";
 import { parseMasterKeys, type KeyRing } from "./keys.ts";
 
 export interface ServerConfig {
@@ -30,6 +36,8 @@ export interface ServerConfig {
   maxPerWindow: number;
   /** Rows in one pattern (§8.4). */
   maxRows: number;
+  /** Development keys by provider, from the environment; empty in production. */
+  serverKeys: Partial<Record<AppProviderId, string>>;
 }
 
 const DATA_DIR = fileURLToPath(new URL("../data/", import.meta.url));
@@ -52,7 +60,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     maxConcurrent: 2,
     maxPerWindow: 30,
     maxRows: 300,
+    serverKeys: production ? {} : serverKeys(env),
   };
+}
+
+function serverKeys(env: NodeJS.ProcessEnv): Partial<Record<AppProviderId, string>> {
+  const keys: Partial<Record<AppProviderId, string>> = {};
+  for (const provider of PROVIDERS) {
+    const value = env[API_KEY_ENV[provider]]?.trim();
+    if (value) keys[provider] = value;
+  }
+  return keys;
 }
 
 function devSecret(name: string): string {

@@ -60,6 +60,8 @@ export interface State {
   keys: Partial<Record<ProviderId, string>>;
   user?: SessionUser;
   savedKeys: SavedKey[];
+  /** Providers the server has a development key for (.env.local). */
+  serverKeys: ProviderId[];
   /** Providers the user agreed to send patterns to (NFR-3). */
   confirmedProviders: ProviderId[];
 }
@@ -113,6 +115,7 @@ export const useApp = create<State>(() => ({
   cacheEnabled: guestSettings?.cacheEnabled ?? true,
   keys: {},
   savedKeys: [],
+  serverKeys: [],
   confirmedProviders: read<ProviderId[]>(CONFIRMED_KEY) ?? [],
 }));
 
@@ -365,5 +368,14 @@ export function savedKeyFor(s: State, provider = s.provider): SavedKey | undefin
 }
 
 export function hasKey(s: State, provider = s.provider): boolean {
-  return !!s.keys[provider] || !!savedKeyFor(s, provider);
+  return !!s.keys[provider] || !!savedKeyFor(s, provider) || s.serverKeys.includes(provider);
+}
+
+/** Which providers the server has a development key for. */
+export async function refreshServerKeys(): Promise<void> {
+  try {
+    set({ serverKeys: (await api.health()).serverKeys ?? [] });
+  } catch {
+    set({ serverKeys: [] });
+  }
 }
