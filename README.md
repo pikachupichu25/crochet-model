@@ -2,7 +2,7 @@
 
 Turn a crochet pattern written in ordinary English into [CrochetPARADE](https://www.crochetparade.org/) code with an LLM, check it with the CrochetPARADE parser, and show it as a 3D model that looks like real yarn.
 
-Status: early. The pattern validator, the layout solver (in Web Workers) and a ball-and-stick structure view are built. Translation and the yarn renderer are not built yet.
+Status: early. The pattern validator, the layout solver (in Web Workers), a ball-and-stick structure view and the evaluation harness, with scores for CrochetPARADE's rule-based translator, are built. LLM translation and the yarn renderer are not built yet.
 
 ## Layout
 
@@ -10,6 +10,7 @@ Status: early. The pattern validator, the layout solver (in Web Workers) and a b
 docs/                   design docs (start with REQUIREMENTS.md, then SPEC.md)
 packages/core/          TypeScript core: validator, stitch graph, layout, CLI
 packages/app/           Vite web app: workers and 3D views
+packages/eval/          evaluation harness: dataset loaders, baseline runs, metrics
 vendor/crochetparade/   pinned copy of the CrochetPARADE parser and solver (GPLv3)
 ```
 
@@ -40,6 +41,16 @@ npm run validate -- --text 'ring\n6sc\n6*[sc2inc]'
 ```
 
 Exit code is 0 when the pattern parses and 1 when it does not; add `--json` for the full result. Run `npm run test:conformance` after upgrading the vendored parser.
+
+Evaluate CrochetPARADE's rule-based translator (needs `python3`; see [SPEC.md §7](docs/SPEC.md)):
+
+```bash
+npm run eval -- fetch                                      # download the datasets (git-ignored)
+npm run eval -- run --translator rules --dataset all       # about 3 minutes
+npm run eval -- report packages/eval/runs/<run>
+```
+
+The datasets are for local evaluation only: StitchSwitch states no licence and CrochetBench data is CC BY-NC 4.0.
 
 ## Licence
 

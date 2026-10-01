@@ -11,7 +11,8 @@
     "test:conformance": "CP_SLOW=1 vitest run packages/core/test/conformance.test.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p packages/app",
     "dev": "npm run dev --workspace @crochet-model/app",
-    "validate": "node --experimental-strip-types --no-warnings packages/core/src/cli/validate.ts"
+    "validate": "node --experimental-strip-types --no-warnings packages/core/src/cli/validate.ts",
+    "eval": "node --experimental-strip-types --no-warnings packages/eval/src/cli.ts"
   },
   "engines": {
     "node": ">=22.6"

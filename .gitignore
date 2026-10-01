@@ -3,3 +3,6 @@ node_modules/
 # Evaluation datasets are downloaded, never committed (see docs/SPEC.md §7.1).
 packages/eval/data/
 dist/
+__pycache__/
+# Evaluation runs hold translations of the datasets above.
+packages/eval/runs/

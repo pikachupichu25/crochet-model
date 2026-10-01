@@ -1,0 +1,9 @@
+{
+  "name": "@crochet-model/eval",
+  "private": true,
+  "type": "module",
+  "license": "GPL-3.0-or-later",
+  "dependencies": {
+    "@crochet-model/core": "*"
+  }
+}

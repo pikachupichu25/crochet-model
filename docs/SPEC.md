@@ -1,7 +1,7 @@
 # Crochet Model App: Technical Specification
 
-> Status: draft, not started  
-> Last updated: 2026-09-29  
+> Status: M0 and M1 built; translation (M2) not started  
+> Last updated: 2026-09-30  
 > Purpose: define how to build what [REQUIREMENTS.md](./REQUIREMENTS.md) asks for: modules, data types, the translation loop, the evaluation harness and the yarn renderer.
 
 REQUIREMENTS.md says **what** the app must do and why. This document says **how**. Requirement IDs (FR-x.y, NFR-x) refer to REQUIREMENTS.md. Background on CrochetPARADE is in REQUIREMENTS.md §4, and on prior work in [RELATED_WORK.md](./RELATED_WORK.md).
@@ -58,6 +58,7 @@ crochet-model/
     app/                       React UI, workers, three.js renderer (§6, §9)
     eval/                      evaluation CLI and dataset loaders (§7)
       data/                    downloaded datasets; git-ignored (§7.1)
+      runs/                    run directories (§7.2); git-ignored
 ```
 
 ## 3. CrochetPARADE integration
@@ -369,6 +370,8 @@ As FR-5.6: structure (spheres and cylinders), yarn (tubes), yarn + texture. Abov
 
 The evaluation answers two questions: is the pipeline good enough to ship, and which model and settings to use. It also lets newer models be tested on the same data as soon as they are released.
 
+**Status: built for the rule-based baseline (M1).** Code: `packages/eval/src/` (`fetch.ts`, `datasets.ts`, `rules.ts` with `rules_bridge.py`, `score.ts`, `chrf.ts`, `run.ts`, `summary.ts`, CLI `cli.ts`); structure match in `packages/core/src/cp/compare.ts`. Commands: `npm run eval -- fetch`, `npm run eval -- run --translator rules --dataset <name|all> [--limit N]`, `npm run eval -- report <run-dir>…`. The LLM translator, `--model`, `--mode`, `--batch`, the cost guard and `eval compare` come with M2.
+
 ### 7.1 Datasets
 
 | Dataset | What it holds | Gold CrochetPARADE? | Licence | Use |
@@ -391,6 +394,13 @@ Observed details that the loaders must handle:
 - StitchSwitch patterns write one English line per row in the form `Row N:` or `RN:`, and the CrochetPARADE has one line per row. Rows can be aligned by line.
 - CrochetBench prompts embed their prefix as `NL:` / `DSL:` pairs followed by the target `NL:`. The loader parses these into rows, so the same translator code runs on them.
 - The two datasets use different CrochetPARADE parser versions (CrochetBench validated with `parse57.js`; we vendor `parse64.js`). Re-validate every gold translation with our vendored parser, and report any that fail rather than silently dropping them.
+
+What M1 established (StitchSwitch commit `262ff43`, CrochetBench commit `4f834d5`):
+
+- **StitchSwitch:** 109 items (`ss-001`…, in CSV order). All 109 gold translations parse with `parse64.js`.
+- **CrochetBench step:** 123 items (54 + 36 + 33; the README's 119 is wrong at this commit). One prompt writes `DL:` for `DSL:`, and 5 steps span several lines; the loader reads prompts line by line and accepts both. In 5 items every earlier DSL is blank, so there is no gold prefix to check. Of the rest, 2 gold prefixes do not parse: `turn` written as a stitch (`step_1_2-016`) and `inc2sc`, which is not a stitch (`step_3_4-010`). These are reported as gold failures and left out of the rates.
+- **Stated counts** are read from the end of the target step only in plain forms (`Turn. 15 sts.`, `(18)`, `[18 sts]`, `turn—18 sc`); counts for several sizes or several stitch kinds are not read. 31 of the 123 targets have one.
+- **CrochetBench project:** 100 records, but one ("Home Spa Bath Mat") has no `instructions`, so 99 items. Ids keep the record position (`project-001`…).
 
 ### 7.2 Runs
 
@@ -421,11 +431,35 @@ Per pattern, then per class and overall:
 
 Datasets with no gold (CrochetBench) report metrics 1, 2 and 5.
 
+How M1 computes them (`score.ts`, `compare.ts`):
+
+- **Parses** needs at least one line the parser reads; an output of only `#` comments counts as empty, not as parsing. A step item is parsed as its gold prefix followed by the output.
+- **Count match** with gold: per gold CrochetPARADE row, the output's row with the same number has the same stitch count (`RowSummary.stitches`). With a stated count (step items): the last row after the output has that count. Averaged per item, then over items.
+- **Structure match** compares stitches by position, because statement uids differ between texts that make the same graph. `hidden` top nodes (`start_anew`) and rows left empty are dropped, the rest are renumbered (row, index), and each stitch becomes its type plus the sorted positions it is worked into. Exact match: every row equal. Partial score: stitches equal at the same position, over the larger of the two stitch counts, so a missing or extra stitch early in a row costs the rest of that row. `ring` then `6sc` is not `ring.R` then `6sc@R`: without `@R` CrochetPARADE works each sc into the one before.
+- **chrF** is sentence-level with sacrebleu's defaults (character 6-grams, beta 2, whitespace removed), on the output's code lines.
+
 ### 7.4 Baselines
 
-- **CrochetPARADE rule-based translator** (`deterministic_translator.js`), run headless on each dataset.
+- **CrochetPARADE rule-based translator**, run headless on each dataset (`rules.ts`). crochetparade.org translates in two halves: a Python package (run in Pyodide) splits the English and proposes candidates per row, and `deterministic_translator.js` checks them with the parser and assembles the "checked CP block". Both are vendored (§3.1); the evaluation runs the Python half with `python3` and the JS half in Node, with the default choices. Step items give the translator only the target step, with the gold prefix's last row count as its row context. Two outputs are scored:
+  - **rules**: the checked block, as the site shows it. Rows the Python half could not read are left out (after one such row, every row up to the next restart), so it is short.
+  - **rules-compiled**: the Python half's own whole-pattern compile, which keeps every row it could read. Rows it could not read become `# REVIEW` comments, so "parses" on patterns with no gold overstates it.
 - **Dias & Karim published numbers** (RELATED_WORK.md §2.1): 74% accuracy and 82.5% correctness for their best fine-tuned 8B model. Their accuracy was judged by hand over 8 folds, so the comparison is approximate.
 - **Our previous run**, via `eval compare`, to catch regressions when prompts change.
+
+**Rule-based baseline (M1, 2026-09-30).** CrochetPARADE `06e987b`, `parse64.js`. Rates are over items whose gold parses. Count match is n/a for project items (no gold, no row alignment); structure and chrF need gold, so only StitchSwitch has them. A full run of all three datasets takes about 3 minutes.
+
+| Dataset | Output | Items | Gold fails | Parses | Count match (items) | Structure exact | Structure partial | chrF | Rows kept |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| StitchSwitch | rules | 109 | 0 | 45.9% | 26.5% (109) | 8.3% | 23.8% | 22.2 | 27.0% |
+| StitchSwitch | rules-compiled | 109 | 0 | 93.6% | 34.8% (109) | 6.4% | 27.9% | 36.3 | – |
+| CrochetBench step | rules | 123 | 2 | 36.4% | 23.3% (30) | – | – | – | 27.7% |
+| CrochetBench step | rules-compiled | 123 | 2 | 59.5% | 23.3% (30) | – | – | – | – |
+| CrochetBench project | rules | 99 | 0 | 67.7% | – | – | – | – | 23.8% |
+| CrochetBench project | rules-compiled | 99 | 0 | 90.9% | – | – | – | – | – |
+
+- **The bar for M2** is structure match on StitchSwitch: 8.3% exact, 27.9% partial at best. The rule-based translator reads about a quarter of the rows; the LLM loop has to read nearly all of them.
+- **Where it fails.** In the checked block, most output that does not parse on CrochetBench project comes from one upstream bug: the Python half's internal `__restart__` marker leaks into 22 of the 99 outputs, and the parser rejects it as an unknown stitch. On StitchSwitch nothing in the checked block fails to parse; it is just short or empty. Structure misses that do parse are real: a slip stitch into the ring instead of into the first sc, `7ss` for "slip stitch into the first stitch of Row 1", a magic ring for "Ch 2".
+- **Not comparable with Dias & Karim** except loosely: their 74% is hand-judged over 8 folds, this is an automatic graph comparison over all 109.
 
 ## 8. Server
 
@@ -471,7 +505,7 @@ Refines REQUIREMENTS.md §10 with the spikes this spec depends on.
 | Milestone | Deliverables | Exit check |
 | --- | --- | --- |
 | **M0 Spike** (done) | Vendor CrochetPARADE; validator wrapper in Node and a Worker; DOT → `StitchGraph`; call the solver from a Worker; render structure mode | Conformance suite passes (§10.2); 5 examples render as on crochetparade.org (§6.5) |
-| **M1 Evaluation first** | Dataset loaders (§7.1); `compare.ts`; rule-based baseline scores | Baseline table for StitchSwitch and CrochetBench |
+| **M1 Evaluation first** (done) | Dataset loaders (§7.1); `compare.ts`; rule-based baseline scores | Baseline table for StitchSwitch and CrochetBench (§7.4) |
 | **M2 Translate** | Segmentation; prompt v1; row loop with repair; `eval run` with `--batch`; first model and effort sweep | Row mode beats the rule-based baseline on structure match |
 | **M3 App** | Server; review UI; code editor; row ↔ stitch links | A new user translates and renders a sample pattern unaided |
 | **M4 Yarn** | Templates for the MVP stitch set; frames; tube meshes; levels of detail | Stitch-recognition test passes (REQUIREMENTS §9) |
