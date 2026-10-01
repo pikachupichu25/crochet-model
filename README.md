@@ -2,14 +2,15 @@
 
 Turn a crochet pattern written in ordinary English into [CrochetPARADE](https://www.crochetparade.org/) code with an LLM, check it with the CrochetPARADE parser, and show it as a 3D model that looks like real yarn.
 
-Status: early. The pattern validator, the layout solver (in Web Workers), a ball-and-stick structure view, the evaluation harness (with scores for CrochetPARADE's rule-based translator) and the LLM translation loop are built. The translator has not yet been scored against the API. The review UI and the yarn renderer are not built yet.
+Status: early. The pattern validator, the layout solver (in Web Workers), a ball-and-stick structure view, the evaluation harness (with scores for CrochetPARADE's rule-based translator), the LLM translation loop, and the app with its server (guest keys, optional accounts with saved keys, review UI, row ↔ stitch links) are built. The translator has not yet been scored against the API. The yarn renderer is not built yet.
 
 ## Layout
 
 ```text
 docs/                   design docs (start with REQUIREMENTS.md, then SPEC.md)
 packages/core/          TypeScript core: validator, stitch graph, layout, CLI
-packages/app/           Vite web app: workers and 3D views
+packages/app/           React web app: pattern input, review, model view; harness.html is the M0 developer harness
+packages/server/        API server: translation with the user's key, accounts, encrypted saved keys, cache
 packages/translator/    LLM translation loop: prompt, provider adapters (Anthropic, OpenRouter, Gemini, OpenAI), validate and repair
 packages/eval/          evaluation harness: dataset loaders, baseline runs, metrics
 vendor/crochetparade/   pinned copy of the CrochetPARADE parser and solver (GPLv3)
@@ -29,10 +30,14 @@ Needs Node 22.6 or later.
 
 ```bash
 npm install
-npm run dev          # start the web app
+npm run server       # the API on port 5181 (translation, accounts)
+npm run dev          # the app on http://localhost:5180, proxying /api to the server
+npm run dev:all      # both of the above in one terminal; Ctrl-C stops both
 npm test             # unit tests
 npm run typecheck
 ```
+
+The samples work without the server or a key. Translating needs the server and an API key for one of the providers; accounts are optional and only save keys and settings. In development the server keeps its SQLite file and generated secrets in `packages/server/data/` (git-ignored) and prints verification and password-reset links to its output instead of sending mail. See [SPEC.md §8](docs/SPEC.md) for `KEY_ENCRYPTION_KEY`, `BETTER_AUTH_SECRET` and the other settings.
 
 Validate a CrochetPARADE pattern from the command line:
 

@@ -17,6 +17,8 @@ import {
   ModelError,
   systemPrompt,
   type Effort,
+  costOf,
+  OUTPUT_TOKENS,
   type ModelInfo,
   type ModelReply,
   type ModelRequest,
@@ -26,7 +28,6 @@ import {
   type TranslatorModel,
 } from "@crochet-model/translator";
 import type { EvalItem } from "./datasets.ts";
-import { costOf } from "./pricing.ts";
 
 const { validate } = createNodeValidator();
 
@@ -184,8 +185,6 @@ export function errorRecord(error: unknown): Record<string, unknown> {
   }
   return record;
 }
-
-const OUTPUT_TOKENS: Record<Effort, number> = { low: 800, medium: 1500, high: 3000, xhigh: 5000, max: 8000 };
 
 /**
  * A rough upper estimate, from characters (about 3.5 per token) and an

@@ -2,7 +2,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { segmentPattern } from "@crochet-model/core";
 import { createNodeValidator } from "@crochet-model/core/node";
 import { describe, expect, it } from "vitest";
-import { assemble, translatePattern, translateWhole, type TranslateOptions } from "../src/loop.ts";
+import { assemble, translatePattern, translateWhole, type CachedRow, type TranslateOptions } from "../src/loop.ts";
 import { ModelError, type ModelReply, type ModelRequest, type TranslatorModel, type Turn } from "../src/model.ts";
 import { BatchModel } from "../src/providers/anthropic.ts";
 import type { RowResponse } from "../src/schema.ts";
@@ -387,5 +387,90 @@ describe("BatchModel", () => {
     await expect(run(errored)).rejects.toThrow("invalid_request_error: bad effort");
     const [expired] = await run({ type: "expired" });
     expect(expired!.pattern.translations[expired!.pattern.rows[0]!.id]!.status).toBe("invalid");
+  });
+});
+
+describe("translatePattern for the app", () => {
+  const english = "Row 1: Ch 7.\nRow 2: Sc in 2nd ch from hook and across, turn. (6)\nRow 3: Ch 1, sc across. (6)";
+  const userRow = (rowId: string, cp: string) => ({
+    rowId,
+    cp,
+    source: "user" as const,
+    status: "valid" as const,
+    confidence: "high" as const,
+    assumptions: [],
+    attempts: [],
+  });
+
+  it("reports each row as it settles, and keeps fixed rows without a request", async () => {
+    const i = input(english);
+    const [r1, r2, r3] = i.rows.map((r) => r.id);
+    const model = new Scripted([reply({ cp: "7ch,turn" }), reply({ cp: "ch,6sc" })]);
+    const seen: string[] = [];
+    const { pattern } = await translatePattern(
+      { ...i, fixed: { [r2!]: userRow(r2!, "sk,6sc,turn") } },
+      options(model, { onRow: (t) => seen.push(`${t.rowId}:${t.source}`) }),
+    );
+    expect(seen).toEqual([`${r1}:llm`, `${r3}:llm`]);
+    expect(pattern.translations[r2!]!.source).toBe("user");
+    expect(assemble(pattern)).toBe("7ch,turn\nsk,6sc,turn\nch,6sc");
+    expect(userText(model.requests[1]!.messages[0])).toContain("given, cannot be amended");
+  });
+
+  it("translates only the rows asked for, after the fixed ones", async () => {
+    const i = input(english);
+    const [r1, r2, r3] = i.rows.map((r) => r.id);
+    const done = { ...userRow(r1!, "7ch,turn"), source: "llm" as const };
+    const model = new Scripted([reply({ cp: "sk,6sc,turn" })]);
+    const { pattern, requests } = await translatePattern(
+      { ...i, fixed: { [r1!]: done, [r3!]: userRow(r3!, "ch,6sc") } },
+      options(model, { only: [r2!] }),
+    );
+    expect(requests).toBe(1);
+    expect(pattern.translations[r2!]!.cp).toBe("sk,6sc,turn");
+    expect(pattern.translations[r3!]).toBeUndefined();
+  });
+
+  it("answers a repeated row from the cache, and misses when the prefix changes", async () => {
+    const store = new Map<string, CachedRow>();
+    const cache = { get: (k: string) => store.get(k), set: (k: string, v: CachedRow) => void store.set(k, v) };
+    const i = input(english);
+    const first = new Scripted([reply({ cp: "7ch,turn" }), reply({ cp: "sk,6sc,turn" }), reply({ cp: "ch,6sc" })]);
+    await translatePattern(i, options(first, { cache }));
+    expect(store.size).toBe(3);
+
+    const again = new Scripted([]);
+    const { pattern, requests } = await translatePattern(i, options(again, { cache }));
+    expect(requests).toBe(0);
+    expect(Object.values(pattern.translations).every((t) => t.cached)).toBe(true);
+    expect(assemble(pattern)).toBe("7ch,turn\nsk,6sc,turn\nch,6sc");
+
+    // An edited row 1 changes every later row's prefix.
+    const edited = new Scripted([reply({ cp: "sk,6sc,turn" }), reply({ cp: "ch,6sc" })]);
+    const r1 = i.rows[0]!.id;
+    const result = await translatePattern({ ...i, fixed: { [r1]: userRow(r1, "7ch, turn") } }, options(edited, { cache }));
+    expect(result.requests).toBe(2);
+  });
+});
+
+describe("user rows and rejected assumptions", () => {
+  it("checks a user's row with the parser and leaves a broken one out of the prefix", async () => {
+    const i = input("Row 1: Ch 7.\nRow 2: Sc across. (6)\nRow 3: Sc across. (6)");
+    const [r1, r2] = i.rows.map((r) => r.id);
+    const user = (rowId: string, cp: string) => ({ rowId, cp, source: "user" as const, status: "valid" as const, confidence: "high" as const, assumptions: [], attempts: [] });
+    const model = new Scripted([reply({ cp: "sk,6sc" })]);
+    const { pattern } = await translatePattern(
+      { ...i, fixed: { [r1!]: user(r1!, "7ch,turn"), [r2!]: user(r2!, "sk,6sc,dc@Z") } },
+      options(model),
+    );
+    expect(pattern.translations[r2!]!.status).toBe("invalid");
+    expect(userText(model.requests[0]!.messages[0])).not.toContain("dc@Z");
+  });
+
+  it("tells the model which assumptions the user rejected", async () => {
+    const i = input("Rnd 1: 6 sc in ring.");
+    const model = new Scripted([reply({ cp: "ring\n6sc" })]);
+    await translatePattern({ ...i, rejected: { [i.rows[0]!.id]: ["'ring' read as a magic ring"] } }, options(model));
+    expect(userText(model.requests[0]!.messages[0])).toContain("the user rejected it");
   });
 });

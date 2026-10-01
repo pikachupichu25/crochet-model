@@ -1,6 +1,6 @@
-// M0 harness: validates CrochetPARADE text in the parser worker as you type,
-// and lays it out in the layout worker on request. Throwaway UI; the real app
-// comes in M3.
+// Developer harness (harness.html): validates CrochetPARADE text in the parser
+// worker as you type, and lays it out in the layout worker on request. The app
+// itself is main.tsx.
 
 import { applyObjectTransforms, readObjectTransforms } from "@crochet-model/core";
 import type { Dimension, StitchGraph, ValidationResult } from "@crochet-model/core";

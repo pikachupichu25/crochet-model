@@ -37,6 +37,8 @@ const TYPE_COLORS: Record<string, string> = {
 // Hover highlights; kept off the usual yarn colours.
 export const HOVER_COLOR = "#ff3fd2";
 export const BASE_COLOR = "#2fbf71";
+/** Stitches of the row selected in the review (FR-3.2). */
+export const SELECT_COLOR = "#ffb000";
 
 const UP = new THREE.Vector3(0, 1, 0);
 
@@ -48,6 +50,7 @@ export class StructureView {
   private readonly model = new THREE.Group();
   private readonly raycaster = new THREE.Raycaster();
   private framePending = false;
+  private disposed = false;
 
   private graph: StitchGraph | undefined;
   private layout: LayoutResult | undefined;
@@ -56,11 +59,15 @@ export class StructureView {
   private stitchMesh: THREE.InstancedMesh | undefined;
   private shownStitches: Stitch[] = [];
   private baseColors: THREE.Color[] = [];
-  private highlighted: number[] = [];
+  private hovered: HoverInfo | undefined;
+  private selected = new Set<string>();
 
   onHover: ((info: HoverInfo | undefined) => void) | undefined;
+  /** A click on a stitch, or on empty space (undefined). Drags that orbit are not clicks. */
+  onPick: ((stitch: Stitch | undefined) => void) | undefined;
 
   private readonly container: HTMLElement;
+  private readonly resizeObserver: ResizeObserver;
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -77,9 +84,17 @@ export class StructureView {
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.addEventListener("change", () => this.requestRender());
 
-    new ResizeObserver(() => this.resize()).observe(container);
+    this.resizeObserver = new ResizeObserver(() => this.resize());
+    this.resizeObserver.observe(container);
     this.renderer.domElement.addEventListener("pointermove", (e) => this.pick(e));
     this.renderer.domElement.addEventListener("pointerleave", () => this.setHover(undefined));
+    let down: { x: number; y: number } | undefined;
+    this.renderer.domElement.addEventListener("pointerdown", (e) => (down = { x: e.clientX, y: e.clientY }));
+    this.renderer.domElement.addEventListener("pointerup", (e) => {
+      if (!down || Math.hypot(e.clientX - down.x, e.clientY - down.y) > 4) return;
+      down = undefined;
+      this.onPick?.(this.stitchAt(e));
+    });
     this.resize();
   }
 
@@ -95,8 +110,37 @@ export class StructureView {
     if (this.graph) this.rebuild();
   }
 
+  /** Highlights these stitches until the selection changes. */
+  setSelection(ids: Iterable<string>): void {
+    this.selected = new Set(ids);
+    this.paint();
+  }
+
+  /** Frames the selected stitches, or the whole model when none are shown. */
+  focusSelection(): void {
+    const at = this.shownStitches.filter((s) => this.selected.has(s.id)).map((s) => this.layout!.positions[s.id]!);
+    if (at.length === 0) return;
+    const box = new THREE.Box3().setFromPoints(at.map((p) => new THREE.Vector3(p[0], p[1], p[2] ?? 0)));
+    const target = box.getCenter(new THREE.Vector3());
+    // Keep the distance; turn to look at the row.
+    this.camera.position.add(target.clone().sub(this.controls.target));
+    this.controls.target.copy(target);
+    this.controls.update();
+    this.requestRender();
+  }
+
+  /** Frees the GPU resources and removes the canvas. */
+  dispose(): void {
+    this.disposed = true;
+    this.clear();
+    this.resizeObserver.disconnect();
+    this.controls.dispose();
+    this.renderer.dispose();
+    this.renderer.domElement.remove();
+  }
+
   clear(): void {
-    this.setHover(undefined);
+    this.hovered = undefined;
     this.graph = undefined;
     this.layout = undefined;
     this.disposeModel();
@@ -122,7 +166,7 @@ export class StructureView {
   }
 
   private rebuild(): void {
-    this.setHover(undefined);
+    this.hovered = undefined;
     this.disposeModel();
     const graph = this.graph!;
     const positions = this.layout!.positions;
@@ -200,8 +244,8 @@ export class StructureView {
       return color;
     });
     this.stitchMesh = stitchMesh;
-    this.highlighted = [];
     this.model.add(stitchMesh);
+    this.paint();
 
     // Internal nodes, small and muted.
     if (this.options.showInternal) {
@@ -236,8 +280,8 @@ export class StructureView {
     return color;
   }
 
-  private pick(event: PointerEvent): void {
-    if (!this.stitchMesh || event.buttons !== 0) return;
+  private stitchAt(event: PointerEvent): Stitch | undefined {
+    if (!this.stitchMesh) return undefined;
     const rect = this.renderer.domElement.getBoundingClientRect();
     const pointer = new THREE.Vector2(
       ((event.clientX - rect.left) / rect.width) * 2 - 1,
@@ -245,32 +289,38 @@ export class StructureView {
     );
     this.raycaster.setFromCamera(pointer, this.camera);
     const hit = this.raycaster.intersectObject(this.stitchMesh, false)[0];
-    const stitch = hit?.instanceId !== undefined ? this.shownStitches[hit.instanceId] : undefined;
+    return hit?.instanceId !== undefined ? this.shownStitches[hit.instanceId] : undefined;
+  }
+
+  private pick(event: PointerEvent): void {
+    if (!this.stitchMesh || event.buttons !== 0) return;
+    const stitch = this.stitchAt(event);
     this.setHover(stitch && { stitch, x: event.clientX, y: event.clientY });
   }
 
   /** Highlights the hovered stitch and the stitches it is worked into. */
   private setHover(info: HoverInfo | undefined): void {
-    const mesh = this.stitchMesh;
-    if (mesh) {
-      for (const i of this.highlighted) mesh.setColorAt(i, this.baseColors[i]!);
-      this.highlighted = [];
-      if (info) {
-        const index = new Map(this.shownStitches.map((s, i) => [s.id, i]));
-        const self = index.get(info.stitch.id)!;
-        mesh.setColorAt(self, new THREE.Color(HOVER_COLOR));
-        this.highlighted.push(self);
-        for (const id of info.stitch.workedInto) {
-          const i = index.get(id);
-          if (i === undefined) continue;
-          mesh.setColorAt(i, new THREE.Color(BASE_COLOR));
-          this.highlighted.push(i);
-        }
-      }
-      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-      this.requestRender();
-    }
+    this.hovered = info;
+    this.paint();
     this.onHover?.(info);
+  }
+
+  /** Colours every stitch: hovered, its base, selected, or its own colour. */
+  private paint(): void {
+    const mesh = this.stitchMesh;
+    if (!mesh) return;
+    const hover = this.hovered?.stitch;
+    const bases = new Set(hover?.workedInto ?? []);
+    const hoverColor = new THREE.Color(HOVER_COLOR);
+    const baseColor = new THREE.Color(BASE_COLOR);
+    const selectColor = new THREE.Color(SELECT_COLOR);
+    this.shownStitches.forEach((s, i) => {
+      const color =
+        s.id === hover?.id ? hoverColor : bases.has(s.id) ? baseColor : this.selected.has(s.id) ? selectColor : this.baseColors[i]!;
+      mesh.setColorAt(i, color);
+    });
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    this.requestRender();
   }
 
   private disposeModel(): void {
@@ -295,11 +345,11 @@ export class StructureView {
   }
 
   private requestRender(): void {
-    if (this.framePending) return;
+    if (this.framePending || this.disposed) return;
     this.framePending = true;
     requestAnimationFrame(() => {
       this.framePending = false;
-      this.renderer.render(this.scene, this.camera);
+      if (!this.disposed) this.renderer.render(this.scene, this.camera);
     });
   }
 }

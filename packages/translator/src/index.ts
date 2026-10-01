@@ -1,7 +1,7 @@
 // LLM translation of English patterns into CrochetPARADE (docs/SPEC.md §5).
 // Node only: it reads its prompt files and the vendored parser from disk.
 
-export { countMatches, lastRowCount, type CountCheck } from "./counts.ts";
+export { countMatches, lastRowCount, type CountCheck } from "@crochet-model/core";
 export {
   assemble,
   settingsOf,
@@ -10,6 +10,8 @@ export {
   type QuestionContext,
   type TranslateInput,
   type TranslateOptions,
+  type CachedRow,
+  type RowCache,
   type TranslateResult,
 } from "./loop.ts";
 export {
@@ -33,7 +35,8 @@ export {
 export { anthropicError, BatchModel, ClaudeModel, customId, requestParams } from "./providers/anthropic.ts";
 export { compatError, compatParams, CompatModel } from "./providers/openaiCompat.ts";
 export { GeminiModel, geminiError, geminiParams } from "./providers/gemini.ts";
-export { API_KEY_ENV, createModel, listModels, type ProviderOptions } from "./providers/index.ts";
+export { API_KEY_ENV, createModel, DEFAULT_MODELS, listModels, type ProviderOptions } from "./providers/index.ts";
 export { ClaudeCodeModel, claudeCodeStatus } from "./providers/claudeCode.ts";
+export { costOf, estimatePattern, OUTPUT_TOKENS, priceOf } from "./pricing.ts";
 export { promptVersion, systemPrompt } from "./prompt.ts";
 export { outputFormat, portableSchema, RowResponse, WholeResponse } from "./schema.ts";

@@ -6,3 +6,7 @@ dist/
 __pycache__/
 # Evaluation runs hold translations of the datasets above.
 packages/eval/runs/
+# The server's SQLite database and generated development secrets.
+packages/server/data/
+
+.env.local

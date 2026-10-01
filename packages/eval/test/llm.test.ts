@@ -15,7 +15,7 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { errorRecord, estimateCost, goldAnswerer, itemInput, LoggingModel, type LlmConfig, type QuestionLog } from "../src/llm.ts";
-import { costOf, priceOf } from "../src/pricing.ts";
+import { costOf, priceOf } from "@crochet-model/translator";
 import { scoreItem } from "../src/score.ts";
 
 const { validate } = createNodeValidator();

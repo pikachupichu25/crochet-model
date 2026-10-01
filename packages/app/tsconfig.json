@@ -1,8 +1,9 @@
 {
   "extends": "../../tsconfig.json",
   "compilerOptions": {
-    "lib": ["ES2022", "DOM", "DOM.Iterable", "WebWorker"],
-    "types": ["vite/client"]
+    "lib": ["ES2023", "DOM", "DOM.Iterable", "WebWorker"],
+    "types": ["vite/client"],
+    "jsx": "react-jsx"
   },
   "include": ["src", "vite.config.ts"],
   "exclude": []

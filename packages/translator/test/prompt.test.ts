@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { createNodeValidator } from "@crochet-model/core/node";
 import { segmentPattern } from "@crochet-model/core";
 import { describe, expect, it } from "vitest";
-import { countMatches, lastRowCount } from "../src/counts.ts";
+import { countMatches, lastRowCount } from "@crochet-model/core";
 
 const { validate } = createNodeValidator();
 const read = (name: string) =>

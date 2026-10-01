@@ -1,0 +1,179 @@
+// The model (FR-4.x, FR-3.2, FR-3.5): the checked pattern laid out in the
+// layout worker and drawn in structure mode. Lays out again when the code
+// changes; failed rows are left out and the panel says so.
+
+import { applyObjectTransforms, readObjectTransforms, type Dimension, type Stitch } from "@crochet-model/core";
+import { useEffect, useRef, useState } from "react";
+import { layoutClient, setDimension, useCheck } from "../check.ts";
+import { guessDimension, rowLabel, summarise } from "../pattern.ts";
+import { selectRow, useApp } from "../store.ts";
+import { StructureView, type ColorMode } from "../view/structureView.ts";
+import { LayoutCancelled } from "../workers/clients.ts";
+
+const QUALITY = { draft: 150, normal: 500, fine: 1500 } as const;
+type Quality = keyof typeof QUALITY;
+
+interface Progress {
+  fraction: number;
+  text: string;
+}
+
+export function ModelPanel() {
+  const check = useCheck((s) => s.check);
+  const checking = useCheck((s) => s.checking);
+  const override = useCheck((s) => s.dimensionOverride);
+  const rows = useApp((s) => s.segmented.rows);
+  const translations = useApp((s) => s.translations);
+  const selectedRowId = useApp((s) => s.selectedRowId);
+  const host = useRef<HTMLDivElement>(null);
+  const view = useRef<StructureView | null>(null);
+  const [quality, setQuality] = useState<Quality>("normal");
+  const [seed, setSeed] = useState<number | undefined>();
+  const [colorMode, setColorMode] = useState<ColorMode>("yarn");
+  const [progress, setProgress] = useState<Progress>();
+  const [info, setInfo] = useState<string>();
+  const [laidOut, setLaidOut] = useState<string>();
+  const [hover, setHover] = useState<{ stitch: Stitch; x: number; y: number }>();
+  const cancel = useRef<() => void>(undefined);
+
+  const summary = summarise(rows, translations);
+  const owners = check?.owners;
+  const ownersRef = useRef(owners);
+  ownersRef.current = owners;
+
+  useEffect(() => {
+    const v = new StructureView(host.current!);
+    view.current = v;
+    v.onHover = (h) => setHover(h ? { stitch: h.stitch, x: h.x, y: h.y } : undefined);
+    v.onPick = (stitch) => selectRow(stitch ? ownersRef.current?.[stitch.row] : undefined);
+    return () => v.dispose();
+  }, []);
+
+  // Lay out whenever the checked code, the seed or the quality changes.
+  const layoutKey = check?.result.ok ? `${check.dimension}|${seed}|${quality}|${check.text}` : undefined;
+  useEffect(() => {
+    if (!check?.result.ok || !check.graph || !layoutKey) return;
+    const graph = check.graph;
+    const transforms = readObjectTransforms(check.text);
+    let retryNote = "";
+    setProgress({ fraction: 0, text: "starting" });
+    const job = layoutClient.layout(
+      check.result.simpleDot!,
+      { seed, iterations: QUALITY[quality] },
+      (p) => setProgress({ fraction: p.iteration / p.iterations, text: `${retryNote}iteration ${p.iteration} of ${p.iterations}` }),
+      (_seed, previous) => (retryNote = `seed ${previous.seedsTried.at(-1)} folded, retrying · `),
+      seed === undefined ? undefined : 1,
+    );
+    cancel.current = job.cancel;
+    job.promise
+      .then((result) => {
+        view.current!.setModel(graph, { ...result, positions: applyObjectTransforms(graph, result.positions, transforms) });
+        setLaidOut(layoutKey);
+        setInfo(`${graph.stitches.length} stitches · seed ${result.seed} · ${(result.ms / 1000).toFixed(1)} s`);
+        setProgress(undefined);
+      })
+      .catch((e: unknown) => {
+        setProgress(undefined);
+        setInfo(e instanceof LayoutCancelled ? "Layout stopped." : `Layout failed: ${(e as Error).message}`);
+      });
+    return () => job.cancel();
+    // layoutKey covers everything the layout depends on.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [layoutKey]);
+
+  // The selected row's stitches (FR-3.2).
+  useEffect(() => {
+    const v = view.current;
+    if (!v || !check?.graph || !owners) return v?.setSelection([]);
+    const ids = selectedRowId ? check.graph.stitches.filter((s) => owners[s.row] === selectedRowId).map((s) => s.id) : [];
+    v.setSelection(ids);
+    if (ids.length) v.focusSelection();
+  }, [selectedRowId, owners, check, laidOut]);
+
+  useEffect(() => view.current?.setOptions({ colorMode }), [colorMode]);
+
+  const auto = guessDimension(rows, translations);
+  const hoverRow = hover && owners ? rows.find((r) => r.id === owners[hover.stitch.row]) : undefined;
+  const stale = laidOut !== layoutKey;
+  const error = check && !check.result.ok ? check.result.error : undefined;
+  const errorRow = error && check?.errorRowId ? rows.find((r) => r.id === check.errorRowId) : undefined;
+
+  return (
+    <section className="model-panel" aria-label="Model">
+      <div className="model-head">
+        <h2>Model</h2>
+        <div className="model-controls">
+          <select
+            aria-label="Dimension"
+            value={override ?? "auto"}
+            onChange={(e) => setDimension(e.target.value === "auto" ? undefined : (Number(e.target.value) as Dimension))}
+          >
+            <option value="auto">Auto ({auto}D)</option>
+            <option value="3">3D</option>
+            <option value="2">2D</option>
+          </select>
+          <select aria-label="Quality" value={quality} onChange={(e) => setQuality(e.target.value as Quality)}>
+            <option value="draft">Draft</option>
+            <option value="normal">Normal</option>
+            <option value="fine">Fine</option>
+          </select>
+          <select aria-label="Colour" value={colorMode} onChange={(e) => setColorMode(e.target.value as ColorMode)}>
+            <option value="yarn">Yarn colour</option>
+            <option value="type">By stitch</option>
+          </select>
+          <button
+            className="button small"
+            title="Lay out again from another seed: try this when a 3D piece comes out inside-out"
+            onClick={() => setSeed((s) => (s ?? 0) + 1)}
+            disabled={!check?.result.ok}
+          >
+            Flip inside-out
+          </button>
+          <button className="button small" onClick={() => view.current?.fit()}>
+            Fit
+          </button>
+        </div>
+      </div>
+
+      {(summary.failed > 0 || summary.questions > 0) && (
+        <p className="model-note">
+          {summary.failed > 0 && `${summary.failed} failed ${summary.failed === 1 ? "row is" : "rows are"} left out of this model. `}
+          {summary.questions > 0 && `${summary.questions} ${summary.questions === 1 ? "row uses" : "rows use"} a best guess until you answer.`}
+        </p>
+      )}
+
+      <div className={`viewport ${stale && !progress ? "stale" : ""}`} ref={host}>
+        {progress && (
+          <div className="layout-progress" role="status">
+            <div className="bar" style={{ ["--done" as string]: `${progress.fraction * 100}%` }} />
+            <span>Laying out · {progress.text}</span>
+            <button className="link" onClick={() => cancel.current?.()}>
+              Stop
+            </button>
+          </div>
+        )}
+        {error && (
+          <div className="viewport-message bad">
+            <strong>The code does not parse{errorRow ? ` at ${rowLabel(errorRow)}` : ""}.</strong>
+            <span>{error.message}</span>
+          </div>
+        )}
+        {!check && !checking && (
+          <div className="viewport-message">
+            <strong>Nothing to show yet.</strong>
+            <span>Pick a sample, or translate a pattern.</span>
+          </div>
+        )}
+        {hover && (
+          <div className="tooltip" style={{ left: hover.x - (host.current?.getBoundingClientRect().left ?? 0) + 12, top: hover.y - (host.current?.getBoundingClientRect().top ?? 0) + 12 }}>
+            <b>{hover.stitch.type}</b>
+            {hoverRow ? ` · ${rowLabel(hoverRow)}` : ` · row ${hover.stitch.row}`}, stitch {hover.stitch.index + 1}
+          </div>
+        )}
+      </div>
+      <p className="model-foot hint">
+        {info ?? (checking ? "Checking…" : "")} {owners ? "· Click a stitch to find its row." : ""}
+      </p>
+    </section>
+  );
+}

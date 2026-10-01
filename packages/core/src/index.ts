@@ -62,3 +62,5 @@ export {
   readObjectTransforms,
   type ObjectTransform,
 } from "./cp/objectTransform.ts";
+export { ukToUs } from "./ukTerms.ts";
+export { countMatches, lastRowCount, type CountCheck } from "./counts.ts";

@@ -7,7 +7,8 @@
 // T − L + 1 when L ≥ 2. A single chain is never taken as a stitch: allowing
 // that would hide an off-by-one in every "ch 1, …" row.
 
-import { parseStitchGraph, type ValidationResult } from "@crochet-model/core";
+import { parseStitchGraph, type StitchGraph } from "./cp/graph.ts";
+import type { ValidationResult } from "./cp/validator.ts";
 
 export interface CountCheck {
   /** The parser's count for the last line. */
@@ -18,11 +19,15 @@ export interface CountCheck {
   accepted: number[];
 }
 
-/** The count check for the last parser row of a valid result. */
-export function lastRowCount(result: ValidationResult): CountCheck | undefined {
+/**
+ * The count check for the last parser row of a valid result. The graph is
+ * parsed from `graphJson` unless given (the browser's parser worker sends the
+ * graph instead).
+ */
+export function lastRowCount(result: ValidationResult, graph?: StitchGraph): CountCheck | undefined {
   if (!result.ok || result.rows.length === 0) return undefined;
   const last = result.rows[result.rows.length - 1]!;
-  const stitches = parseStitchGraph(result.graphJson!)
+  const stitches = (graph ?? parseStitchGraph(result.graphJson!))
     .stitches.filter((s) => s.row === last.row)
     .sort((a, b) => a.index - b.index);
   let leading = 0;

@@ -17,8 +17,11 @@
 // - An amendment is "labels only" when the amended prefix makes the same stitch
 //   graph as before (compare.ts), which is exactly what a label cannot change.
 
+import { createHash } from "node:crypto";
 import {
   canonicalRows,
+  countMatches,
+  lastRowCount,
   parseStitchGraph,
   type Attempt,
   type PatternNote,
@@ -29,7 +32,6 @@ import {
   type Usage,
   type ValidationResult,
 } from "@crochet-model/core";
-import { countMatches, lastRowCount } from "./counts.ts";
 import { isFatal, type Effort, type ModelReply, type TranslatorModel, type Turn } from "./model.ts";
 import {
   amendmentRepair,
@@ -67,6 +69,14 @@ export interface TranslateOptions {
   answer?: (context: QuestionContext) => number | undefined;
   /** Prefix for request ids, unique per pattern within a run. */
   idPrefix: string;
+  /** Called as each row is settled, and again for an earlier row when a later one amends it. */
+  onRow?: (translation: RowTranslation) => void;
+  /** Translate only these rows (and accept fixed ones); stop after the last of them. */
+  only?: string[];
+  /** Row translations kept between patterns (SPEC §8.4); rows found here send no request. */
+  cache?: RowCache;
+  /** Stops before the next request once aborted (the app's user went away). */
+  signal?: AbortSignal;
 }
 
 export interface TranslateInput {
@@ -76,6 +86,29 @@ export interface TranslateInput {
   colors?: Record<string, string>;
   /** Rows already translated, by row id (the gold prefix of a step item). */
   given?: Record<string, string>;
+  /**
+   * Rows whose translation is already settled, by row id: rows the user
+   * edited, or earlier rows when one row is re-translated. They join the
+   * prefix unless invalid. A `user` row is never amended (FR-3.3); an `llm`
+   * row may gain labels.
+   */
+  fixed?: Record<string, RowTranslation>;
+  /** Assumptions the user rejected, by row id; sent with that row's request (FR-3.4). */
+  rejected?: Record<string, string[]>;
+}
+
+/** A row as the loop accepted it, before the user's answer is applied. */
+export interface CachedRow {
+  response: RowResponse;
+  /** Earlier rows it amended, by row id. */
+  amended: [string, string][];
+  status: "valid" | "count_mismatch";
+  attempts: Attempt[];
+}
+
+export interface RowCache {
+  get(key: string): CachedRow | undefined;
+  set(key: string, value: CachedRow): void;
 }
 
 export interface TranslateResult {
@@ -150,6 +183,14 @@ function newParserRows(result: ValidationResult, before: number): AcceptedRow["p
   return result.rows.slice(before).map((r) => ({ row: r.row, count: r.stitches }));
 }
 
+type Candidate = {
+  response: RowResponse;
+  amended: Map<string, string>;
+  result?: ValidationResult;
+  countOk: boolean;
+  countError: number;
+};
+
 class PatternTranslator {
   private accepted: AcceptedRow[] = [];
   private translations: Record<string, RowTranslation> = {};
@@ -184,6 +225,7 @@ class PatternTranslator {
   }
 
   private async send(id: string, effort: Effort, messages: Turn[], whole: boolean): Promise<ModelReply> {
+    this.o.signal?.throwIfAborted();
     this.requests += 1;
     const reply = await this.o.model.send({
       id: `${this.o.idPrefix}-${id}`,
@@ -216,32 +258,82 @@ class PatternTranslator {
     };
   }
 
-  async translateRows(): Promise<void> {
-    for (const [i, row] of this.input.rows.entries()) {
-      const given = this.input.given?.[row.id];
-      if (given !== undefined) this.acceptGiven(row, given);
-      else await this.translateRow(row, i);
+  /** A settled row, as it is: it joins the prefix unless invalid. */
+  private acceptFixed(row: PatternRow, settled: RowTranslation) {
+    // A copy: an amendment changes it in place.
+    const translation = { ...settled };
+    this.translations[row.id] = translation;
+    const q = translation.question;
+    if (q?.answer !== undefined) this.context.answers.push({ rowId: row.id, question: q, answer: q.answer });
+    const before = this.parserRowCount();
+    const result = translation.cp.trim() ? this.o.validate(joinCp([this.prefixText(), translation.cp])) : undefined;
+    // A user's edit is checked here, as the loop checks its own rows.
+    if (translation.source === "user") {
+      const count = result?.ok && result.rows.length > before ? lastRowCount(result) : undefined;
+      translation.status = result && !result.ok ? "invalid" : countMatches(count, row.statedCount) || !count ? "valid" : "count_mismatch";
     }
+    if (translation.status === "invalid") return;
+    this.accepted.push({
+      row,
+      cp: translation.cp,
+      parserRows: result?.ok ? newParserRows(result, before) : [],
+      given: translation.source === "user" || translation.source === "gold",
+    });
+  }
+
+  async translateRows(): Promise<void> {
+    const only = this.o.only ? new Set(this.o.only) : undefined;
+    let left = only?.size ?? Infinity;
+    for (const [i, row] of this.input.rows.entries()) {
+      if (left === 0) break;
+      const given = this.input.given?.[row.id];
+      const fixed = this.input.fixed?.[row.id];
+      if (given !== undefined) this.acceptGiven(row, given);
+      else if (fixed && !only?.has(row.id)) this.acceptFixed(row, fixed);
+      else if (!only || only.has(row.id)) {
+        await this.translateRow(row, i);
+        this.o.onRow?.(this.translations[row.id]!);
+      }
+      if (only?.has(row.id)) left -= 1;
+    }
+  }
+
+  /** Identifies everything a row's request depends on (SPEC §8.4). */
+  private cacheKey(target: PatternRow, prefix: string): string {
+    return createHash("sha256")
+      .update(
+        JSON.stringify([
+          this.version,
+          this.input.english,
+          this.context.colors,
+          this.context.answers.map((a) => [a.rowId, a.answer]),
+          target.id,
+          prefix,
+        ]),
+      )
+      .digest("hex");
+  }
+
+  private versionText: string | undefined;
+  private get version(): string {
+    return (this.versionText ??= promptVersion(settingsOf({ ...this.o, provider: this.o.model.provider }, "row")));
   }
 
   private async translateRow(target: PatternRow, rowIndex: number): Promise<void> {
     const maxAttempts = this.o.maxAttempts ?? DEFAULT_ATTEMPTS;
     const prefix = this.prefixText();
     const prefixRows = this.parserRowCount();
+    const cacheKey = this.o.cache ? this.cacheKey(target, prefix) : undefined;
+    const hit = cacheKey ? this.o.cache!.get(cacheKey) : undefined;
+    if (hit && this.replayCached(target, rowIndex, hit, prefix, prefixRows)) return;
+
     const oldGraph = prefix ? this.graphRows(prefix) : [];
     const afterInvalid = Object.values(this.translations).some((t) => t.status === "invalid");
     const messages: Turn[] = [
-      { role: "user", blocks: [patternBlock(this.context), rowBlock(this.accepted, target)] },
+      { role: "user", blocks: [patternBlock(this.context), rowBlock(this.accepted, target, this.input.rejected?.[target.id])] },
     ];
     const attempts: Attempt[] = [];
 
-    type Candidate = {
-      response: RowResponse;
-      amended: Map<string, string>;
-      result?: ValidationResult;
-      countOk: boolean;
-      countError: number;
-    };
     let accepted: (Candidate & { status: RowTranslation["status"] }) | undefined;
     let best: Candidate | undefined;
     const better = (a: Candidate, b: Candidate | undefined) => {
@@ -256,7 +348,7 @@ class PatternTranslator {
       try {
         reply = await this.send(`${target.id}-${attempt}`, attempt ? this.o.repairEffort : this.o.effort, messages, false);
       } catch (error) {
-        if (isFatal(error)) throw error;
+        if (isFatal(error) || this.o.signal?.aborted) throw error;
         attempts.push({ cp: "", validation: failed(`request failed: ${String(error)}`), provider: this.o.model.provider, model: this.o.modelName, usage: zeroUsage(), rejected: "request failed" });
         break;
       }
@@ -364,6 +456,41 @@ class PatternTranslator {
       return;
     }
 
+    if (cacheKey) {
+      this.o.cache!.set(cacheKey, {
+        response: final.response,
+        amended: [...final.amended],
+        status: final.status === "count_mismatch" ? "count_mismatch" : "valid",
+        attempts,
+      });
+    }
+    this.settle(target, rowIndex, final, attempts, prefix, prefixRows);
+  }
+
+  /** A cached row, settled as if just translated; false when it no longer parses here. */
+  private replayCached(target: PatternRow, rowIndex: number, hit: CachedRow, prefix: string, prefixRows: number): boolean {
+    const amended = new Map(hit.amended);
+    const cp = hit.response.cp.trim();
+    let result: ValidationResult | undefined;
+    if (cp) {
+      result = this.o.validate(joinCp([...this.accepted.map((r) => amended.get(r.row.id) ?? r.cp), cp]));
+      if (!result.ok) return false;
+    }
+    const candidate = { response: hit.response, amended, result, countOk: hit.status === "valid", countError: 0, status: hit.status };
+    this.settle(target, rowIndex, candidate, hit.attempts, prefix, prefixRows);
+    this.translations[target.id]!.cached = true;
+    return true;
+  }
+
+  /** Applies the answer and the amendments, and adds the row to the prefix. */
+  private settle(
+    target: PatternRow,
+    rowIndex: number,
+    final: Candidate & { status: RowTranslation["status"] },
+    attempts: Attempt[],
+    prefix: string,
+    prefixRows: number,
+  ): void {
     let cp = final.response.cp.trim();
     let status = final.status;
     let result = final.result;
@@ -411,6 +538,7 @@ class PatternTranslator {
       const t = this.translations[rowId]!;
       t.cp = amendedCp;
       t.assumptions = [...t.assumptions, `labels added for row [${target.id}]`];
+      this.o.onRow?.(t);
     }
 
     this.translations[target.id] = translation;
@@ -450,7 +578,7 @@ class PatternTranslator {
       try {
         reply = await this.send(`whole-${attempt}`, attempt ? this.o.repairEffort : this.o.effort, messages, true);
       } catch (error) {
-        if (isFatal(error)) throw error;
+        if (isFatal(error) || this.o.signal?.aborted) throw error;
         attempts.push({ cp: "", validation: failed(`request failed: ${String(error)}`), provider: this.o.model.provider, model: this.o.modelName, usage: zeroUsage(), rejected: "request failed" });
         break;
       }

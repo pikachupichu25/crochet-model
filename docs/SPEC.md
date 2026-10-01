@@ -1,6 +1,6 @@
 # Crochet Model App: Technical Specification
 
-> Status: M0 and M1 built; M2 translator and provider adapters built, model sweep pending  
+> Status: M0 and M1 built; M2 translator and provider adapters built, model sweep pending; M3 app and server built, exit check pending a real key  
 > Last updated: 2026-10-01  
 > Purpose: define how to build what [REQUIREMENTS.md](./REQUIREMENTS.md) asks for: modules, data types, the translation loop, the evaluation harness, the server with user accounts and the yarn renderer.
 
@@ -47,6 +47,8 @@ crochet-model/
     core/                      pure TypeScript, runs in browser, worker and Node
       src/types.ts             shared types (§4)
       src/segment.ts           English → PatternRows (§5.1)
+      src/ukTerms.ts           UK → US terms, after the user confirms (FR-1.2)
+      src/counts.ts            stated-count check (§5.5)
       src/cp/validator.ts      wraps processText (§3.2)
       src/cp/graph.ts          DOT text → StitchGraph (§3.3)
       src/cp/compare.ts        structure match (§7.3)
@@ -64,11 +66,16 @@ crochet-model/
         openaiCompat.ts        Chat Completions: OpenAI and OpenRouter
         gemini.ts              Gemini API
         capabilities.ts        what each model supports: structured output, effort, caching
-      src/counts.ts            stated-count check (§5.5)
       src/loop.ts              translate → validate → repair (§5.5)
+      src/pricing.ts           prices on file, cost and estimates (§7.2, §8.4)
     server/                    HTTP API, accounts, key store, translation cache (§8)
+      src/app.ts               routes (§8.1)
       src/auth.ts              Better Auth setup (§8.2)
       src/keys.ts              encrypt, decrypt, check and redact API keys (§8.3)
+      src/store.ts             keys, settings and cache tables
+      src/limits.ts            translations at once and per window (§8.4)
+      src/mail.ts              verification and reset mail (development: printed)
+      data/                    SQLite file and development secrets; git-ignored
     app/                       React UI, workers, three.js renderer (§6, §9)
     eval/                      evaluation CLI and dataset loaders (§7)
       data/                    downloaded datasets; git-ignored (§7.1)
@@ -316,7 +323,7 @@ for each row, in order:
 - **After an invalid row,** the next rows are still translated, against the prefix without the failed row. Their counts will usually be off, so they are flagged, not repaired, until the user fixes the failed row.
 **Status: built (M2).** Code: `packages/translator/src/loop.ts` (`translatePattern`, `translateWhole`), tested with a scripted model in `test/loop.test.ts`. Decisions made while building it:
 
-- **Stated counts allow for a beginning chain** (`counts.ts`). The parser counts every chain; patterns usually do not count a turning chain, and count a chain-3 as one stitch. A line that starts with L chains and makes T stitches in all matches T − L, or T − L + 1 when L ≥ 2. A single chain is never taken as a stitch: allowing it would hide an off-by-one in every "ch 1, …" row. The evaluation's step-level count metric uses the same rule.
+- **Stated counts allow for a beginning chain** (core `counts.ts`, shared with the app's check of user edits). The parser counts every chain; patterns usually do not count a turning chain, and count a chain-3 as one stitch. A line that starts with L chains and makes T stitches in all matches T − L, or T − L + 1 when L ≥ 2. A single chain is never taken as a stitch: allowing it would hide an off-by-one in every "ch 1, …" row. The evaluation's step-level count metric uses the same rule.
 - **A deliberate count difference stops the repairs.** When the model's `expectedCount` equals the parser's count and not the stated one, it has said the English counts differently (for example skipped chains counted as a dc); the row is accepted as `count_mismatch` without more requests.
 - **A row that parses with the wrong count joins the prefix** as `count_mismatch`; only rows that do not parse are left out. Leaving out a row with one stitch too many would break every row after it.
 - **"Labels only" is checked by graph.** An amendment is accepted when the amended prefix parses and makes the same canonical stitch graph as before (`canonicalRows`, §7.3): labels are exactly what cannot change the graph. This answers open question 4.
@@ -326,7 +333,7 @@ for each row, in order:
 - **Given rows are fixed.** `amendPrevious` may not change a given row (the gold prefix of a step item), since it is scored unchanged; the row block marks them.
 - **After an invalid row,** a count mismatch is accepted as `count_mismatch` without a repair request; parse errors are still repaired.
 
-- **Rule-based candidate (FR-2.9).** Not built in M2: the rule-based translator splits patterns differently, so its candidates first need aligning to our rows. Deferred to M3. When CrochetPARADE's own translator yields a valid candidate for the row, compare it with the LLM's. The same stitch graph raises confidence to `high`; a different graph shows both candidates to the user.
+- **Rule-based candidate (FR-2.9).** Not built in M2 or M3: the rule-based translator splits patterns differently, so its candidates first need aligning to our rows, and the server would need `python3`. When CrochetPARADE's own translator yields a valid candidate for the row, compare it with the LLM's. The same stitch graph raises confidence to `high`; a different graph shows both candidates to the user.
 
 ### 5.6 LLM providers
 
@@ -594,6 +601,16 @@ How M1 computes them (`score.ts`, `compare.ts`):
 
 ## 8. Server
 
+**Status: built (M3).** Code: `packages/server/src/` (`app.ts`, `auth.ts`, `keys.ts`, `store.ts`, `limits.ts`, `config.ts`, `mail.ts`, `main.ts`); `npm run server` on port 5181, behind the Vite dev server's `/api` proxy so the app and the API share an origin. Tests in `packages/server/test/server.test.ts` cover §10.1's server cases with fake providers. Decisions made while building it:
+
+- **Loop hooks** (`TranslateOptions`): `onRow` streams each settled row (and again an earlier row a later one amends); `only` translates one row after the settled ones; `fixed` rows are accepted as given, a `user` row checked by the parser and never amended; `rejected` sends a row's rejected assumptions with its request; `signal` stops before the next request when the browser goes away.
+- **Cache key** per row: prompt version (which covers provider, model and effort), English, colours, answers so far, row id, and the accepted CrochetPARADE before the row. The prefix stands in for the user's edits, so an edit invalidates exactly the rows after it. A cached row replays its amendments and is marked `cached`. `/api/translate/row` writes the cache but does not read it: the user asked for a fresh answer.
+- **`POST /api/translate/estimate`** (not in the table below): §7.2's rough estimate for one pattern (`estimatePattern`, now in `translator/src/pricing.ts`), for the confirmation above US$1.
+- **Master keys:** `KEY_ENCRYPTION_KEY` is one base64 key, or versioned keys newest first (`2:<b64>,1:<b64>`). The re-encryption script is not written. In development a missing secret is generated into `data/dev-secrets.json`.
+- **Mail:** only a development mailer that prints links to the server log; `main.ts` refuses to start with `NODE_ENV=production` until a real transport exists.
+- **Rate limits:** Better Auth limits sign-in, sign-up, reset and verification mail per IP; per-email limits are not built.
+- **Errors in keys:** provider messages are scrubbed of the key (and of its last 8 characters, which masked echoes keep) before they are logged or sent; the logger redacts secret headers and fields.
+
 The server runs the translator loop with the caller's key and caches results. Every step works without an account; an account only lets a user save keys (and settings) on the server instead of entering a key each visit. The server never sends a key back to the browser.
 
 **Where the key comes from,** per request:
@@ -669,6 +686,16 @@ CREATE TABLE user_settings (
 
 ## 9. App
 
+**Status: built (M3).** Code: `packages/app/src/` (`main.tsx`, `ui/`, `store.ts`, `check.ts`, `pattern.ts`, `api.ts`, `samples.ts`); the M0 harness moved to `harness.html`. Decisions made while building it:
+
+- **Samples** (`samples.ts`, FR-1.5): flat swatch, granny square, amigurumi ball and beanie, written by us with their translations; a test checks each parses and makes every stated count. They show as source `gold` ("sample").
+- **Editing is per row:** each row's code opens in CodeMirror on click and is checked by the parser after the rows before it (status, count, inline error). The whole-pattern Code view, with the English as comments (FR-6.1), is read-only, with copy, download and "open CrochetPARADE" (FR-6.4).
+- **Row ↔ stitch:** the assembled code is checked in the worker on every change; each part's own lines (`mapRowsToLines`) say how many parser rows it makes, which maps `Stitch.row` to the English row. Where brackets span lines the mapping is dropped and the links are off.
+- **2D or 3D** is guessed from the pattern (turned rows and flat-growing rounds 2D; decreases or rounds that stop growing 3D) and can be changed. Quality is draft, normal or fine (150, 500, 1500 iterations); "flip inside-out" lays out from the next seed.
+- **Translate** needs a key the provider accepted (its model list loaded). The first translation with each provider asks to confirm, naming it; estimates over US$1 ask too.
+- **UK terms** convert with `ukToUs` (core `ukTerms.ts`) after the user confirms.
+- **Not built:** the rule-based candidate (FR-2.9), the tension view (FR-4.5), incremental layout (FR-4.4); exports beyond text (M5).
+
 - **Screens:** Input (paste, samples, UK/US check) → Review (three columns, questions, code editor; FR-3.x) → Model (2D/3D view, level of detail, tension, flip; FR-4.x, FR-5.x). The review and model views are side by side on wide screens.
 - **No sign-in wall.** Every screen works signed out; "Sign in" sits in the header and is only needed to save keys.
 - **Account screens:** Sign in / sign up; Settings with **API keys** (one card per provider: add or replace a key, last 4 characters, status, delete, a link to where the provider issues keys) and **Translation** (default provider, model and effort; recommended models first with their score and cost per 20-row pattern; cache on or off). Guests get the Translation settings too, stored in `localStorage`.
@@ -706,7 +733,7 @@ Refines REQUIREMENTS.md §10 with the spikes this spec depends on.
 | **M0 Spike** (done) | Vendor CrochetPARADE; validator wrapper in Node and a Worker; DOT → `StitchGraph`; call the solver from a Worker; render structure mode | Conformance suite passes (§10.2); 5 examples render as on crochetparade.org (§6.5) |
 | **M1 Evaluation first** (done) | Dataset loaders (§7.1); `compare.ts`; rule-based baseline scores | Baseline table for StitchSwitch and CrochetBench (§7.4) |
 | **M2 Translate** (built for Claude; providers and sweep pending) | Segmentation; prompt v1; row loop with repair; `eval run` with `--batch`; provider-neutral `TranslatorModel` with Anthropic, OpenAI-compatible (OpenAI, OpenRouter) and Gemini adapters (§5.6); first model and effort sweep across providers; `models.json` | Row mode beats the rule-based baseline on structure match with at least one model per provider |
-| **M3 App** | Server with guest keys, optional accounts and encrypted key store (§8); key settings and model picker; review UI; code editor; row ↔ stitch links | A new user, without an account, enters their own key, translates and renders a sample pattern unaided; signing in and saving the key also works |
+| **M3 App** (built; exit check needs a real key) | Server with guest keys, optional accounts and encrypted key store (§8); key settings and model picker; review UI; code editor; row ↔ stitch links | A new user, without an account, enters their own key, translates and renders a sample pattern unaided; signing in and saving the key also works |
 | **M4 Yarn** | Templates for the MVP stitch set; frames; tube meshes; levels of detail | Stitch-recognition test passes (REQUIREMENTS §9) |
 | **M5 Polish** | Exports, incremental layout, performance | NFR-1 and NFR-2 met |
 

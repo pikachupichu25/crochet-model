@@ -15,9 +15,17 @@ export const API_KEY_ENV: Record<AppProviderId, string> = {
   openai: "OPENAI_API_KEY",
 };
 
+/**
+ * The model each provider starts on in the app (SPEC §5.6). Only Anthropic
+ * has one until the sweep scores the others; there the user picks.
+ */
+export const DEFAULT_MODELS: Partial<Record<AppProviderId, string>> = { anthropic: "claude-opus-5-5" };
+
 export interface ProviderOptions {
   /** The user's key; the provider's environment variable when omitted. */
   apiKey?: string;
+  /** Anthropic only: server-side fallback on a refusal, for the live app (SPEC §5.6). */
+  fallbacks?: boolean;
 }
 
 /** A direct (not batched) model for the provider. */

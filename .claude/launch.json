@@ -4,8 +4,22 @@
     {
       "name": "crochet-model-app",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev", "--workspace", "@crochet-model/app"],
+      "runtimeArgs": [
+        "run",
+        "dev",
+        "--workspace",
+        "@crochet-model/app"
+      ],
       "port": 5180
+    },
+    {
+      "name": "crochet-model-api",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "server"
+      ],
+      "port": 5181
     }
   ]
 }

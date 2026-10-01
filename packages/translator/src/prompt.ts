@@ -11,9 +11,8 @@
 
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import type { ParseError, PatternNote, PatternRow, Question } from "@crochet-model/core";
+import type { CountCheck, ParseError, PatternNote, PatternRow, Question } from "@crochet-model/core";
 import { builtinStitches } from "@crochet-model/core/node";
-import type { CountCheck } from "./counts.ts";
 import type { TextBlock } from "./model.ts";
 import { outputFormat, RowResponse, WholeResponse } from "./schema.ts";
 
@@ -95,7 +94,7 @@ export interface AcceptedRow {
 }
 
 /** User block 2: what is accepted so far and the row to translate. */
-export function rowBlock(accepted: AcceptedRow[], target: PatternRow): TextBlock {
+export function rowBlock(accepted: AcceptedRow[], target: PatternRow, rejected: string[] = []): TextBlock {
   const done = accepted.length
     ? accepted
         .map((a) => {
@@ -119,7 +118,10 @@ export function rowBlock(accepted: AcceptedRow[], target: PatternRow): TextBlock
     text:
       `<accepted>\n${done}\n</accepted>\n\n` +
       `Translate row [${target.id}]: ${target.label ? `${target.label}: ` : ""}${target.text}\n` +
-      `${stated}${span}${prev}`,
+      `${stated}${span}${prev}` +
+      (rejected.length
+        ? `\n\nAn earlier translation of this row assumed the following, and the user rejected it. Do not assume it again; ask a question if the English leaves it open:\n${rejected.map((a) => `- ${a}`).join("\n")}`
+        : ""),
   };
 }
 

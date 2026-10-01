@@ -74,6 +74,8 @@ export interface RowTranslation {
   assumptions: string[];
   question?: Question;
   attempts: Attempt[];
+  /** Answered from the translation cache: no request was sent for it (SPEC §8.4). */
+  cached?: boolean;
 }
 
 /** A whole translated pattern: the thing saved, cached and exported. */

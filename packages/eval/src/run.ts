@@ -51,7 +51,7 @@ import {
 } from "@crochet-model/translator";
 import { loadDataset, type DatasetName, type EvalItem } from "./datasets.ts";
 import { estimateCost, goldAnswerer, itemInput, LoggingModel, type LlmConfig, type QuestionLog } from "./llm.ts";
-import { costOf, priceOf } from "./pricing.ts";
+import { costOf, priceOf } from "@crochet-model/translator";
 import { translateWithRules, type RulesOutput } from "./rules.ts";
 import { checkGold, scoreItem, type GoldCheck, type ItemScore } from "./score.ts";
 import { DATA_DIR, RUNS_DIR } from "./sources.ts";

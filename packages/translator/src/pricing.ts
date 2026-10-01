@@ -1,9 +1,10 @@
-// Dollar cost of a run (docs/SPEC.md §7.2, §7.3 metric 5). Prices are US$
+// Dollar cost of a run or a translation (docs/SPEC.md §7.2, §7.3 metric 5, §8.4). Prices are US$
 // per million tokens, standard rates as of 2026-09; the Batches API halves
 // all of them. Cache writes are for the 5-minute cache.
 
 import type { Usage } from "@crochet-model/core";
-import type { ModelInfo, ProviderId } from "@crochet-model/translator";
+import type { Effort, ModelInfo, ProviderId } from "./model.ts";
+import { systemPrompt } from "./prompt.ts";
 
 type Price = NonNullable<ModelInfo["price"]>;
 
@@ -37,4 +38,26 @@ export function costOf(price: Price | undefined, usage: Usage, batch: boolean): 
       usage.cacheWriteTokens * (price.cacheWrite ?? price.input)) /
     1e6;
   return batch ? dollars / 2 : dollars;
+}
+
+/** Output tokens assumed per request, by effort. */
+export const OUTPUT_TOKENS: Record<Effort, number> = { low: 800, medium: 1500, high: 3000, xhigh: 5000, max: 8000 };
+
+/**
+ * A rough upper estimate of one pattern in row mode, from characters (about
+ * 3.5 per token): one request per row, with half again for repairs; the
+ * system prompt and the pattern are written to the cache once and read back
+ * on every request.
+ */
+export function estimatePattern(english: string, rows: number, effort: Effort, price: Price | undefined): { dollars?: number; requests: number; usage: Usage } {
+  const systemTokens = systemPrompt().length / 3.5;
+  const patternTokens = english.length / 3.5 + 15 * rows;
+  const requests = Math.max(1, rows) * 1.5;
+  const usage: Usage = {
+    cacheWriteTokens: systemTokens + patternTokens,
+    cacheReadTokens: requests * (systemTokens + patternTokens),
+    inputTokens: requests * (300 + (english.length / 3.5) * 0.5),
+    outputTokens: requests * OUTPUT_TOKENS[effort],
+  };
+  return { dollars: costOf(price, usage, false), requests: Math.round(requests), usage };
 }
