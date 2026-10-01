@@ -70,6 +70,7 @@ export function geminiReply(response: GenerateContentResponse, model: string): M
     stopReason: stopReason(response),
     usage: geminiUsage(response.usageMetadata),
     model: response.modelVersion ?? model,
+    response,
   };
 }
 

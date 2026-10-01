@@ -97,7 +97,7 @@ export function claudeCodeErrorKind(r: CliResult): ErrorKind {
 /** The reply for a parsed CLI result; throws a ModelError for an error result. */
 export function claudeCodeReply(r: CliResult, requested: string): ModelReply {
   if (r.is_error) {
-    throw new ModelError("claude-code", claudeCodeErrorKind(r), r.result ?? `error result (${r.subtype ?? "unknown"})`);
+    throw new ModelError("claude-code", claudeCodeErrorKind(r), r.result ?? `error result (${r.subtype ?? "unknown"})`, { cause: r });
   }
   if (!r.session_id) throw new ModelError("claude-code", "retryable", "no session id in the result");
   const text = r.structured_output !== undefined ? JSON.stringify(r.structured_output) : (r.result ?? "");
@@ -118,6 +118,7 @@ export function claudeCodeReply(r: CliResult, requested: string): ModelReply {
     },
     // No costUsd: the CLI's figure is what the API would have charged, not what a plan costs.
     model: Object.keys(r.modelUsage ?? {})[0] ?? requested,
+    response: r,
   };
 }
 

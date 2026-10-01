@@ -14,6 +14,7 @@ import {
 import { createNodeValidator } from "@crochet-model/core/node";
 import {
   assemble,
+  ModelError,
   systemPrompt,
   type Effort,
   type ModelInfo,
@@ -144,22 +145,44 @@ export class LoggingModel implements TranslatorModel {
     this.file = file;
   }
 
+  /**
+   * One line per request: the request without the shared system prompt and
+   * schema (prompt.txt, schema.json), and the whole reply, the provider's own
+   * response included, or the error.
+   */
   async send(request: ModelRequest): Promise<ModelReply> {
     const { system, schema, ...rest } = request;
     void system;
     void schema;
+    const startedAt = new Date().toISOString();
+    const t0 = performance.now();
+    const line = (result: object) =>
+      appendFileSync(this.file, `${JSON.stringify({ request: rest, startedAt, ms: Math.round(performance.now() - t0), ...result })}\n`);
     try {
       const reply = await this.inner.send(request);
-      appendFileSync(
-        this.file,
-        `${JSON.stringify({ request: rest, reply: { text: reply.text, stopReason: reply.stopReason, usage: reply.usage, costUsd: reply.costUsd, model: reply.model } })}\n`,
-      );
+      line({ reply });
       return reply;
     } catch (error) {
-      appendFileSync(this.file, `${JSON.stringify({ request: rest, error: String(error) })}\n`);
+      line({ error: errorRecord(error) });
       throw error;
     }
   }
+}
+
+/** An error as data: its kind and provider, and the response behind it when there is one. */
+export function errorRecord(error: unknown): Record<string, unknown> {
+  if (!(error instanceof Error)) return { message: String(error) };
+  const record: Record<string, unknown> = { name: error.name, message: error.message };
+  if (error instanceof ModelError) {
+    record.kind = error.kind;
+    record.provider = error.provider;
+  }
+  const cause = error.cause as { status?: unknown; error?: unknown } | undefined;
+  if (cause && typeof cause === "object") {
+    // An SDK error's status and body, or a CLI's result.
+    record.cause = "status" in cause || "error" in cause ? { status: cause.status, body: cause.error } : cause;
+  }
+  return record;
 }
 
 const OUTPUT_TOKENS: Record<Effort, number> = { low: 800, medium: 1500, high: 3000, xhigh: 5000, max: 8000 };

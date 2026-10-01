@@ -62,6 +62,7 @@ function toReply(message: {
       cacheWriteTokens: message.usage.cache_creation_input_tokens ?? 0,
     },
     model: message.model,
+    response: message,
   };
 }
 

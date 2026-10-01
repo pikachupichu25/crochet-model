@@ -4,17 +4,28 @@
 //   runs/<time>-<translator>-<dataset>/
 //     config.json     what ran: translator settings, prompt version, dataset
 //                     and CrochetPARADE commits
+//     run.log         every progress line printed during the run
 //     prompt.txt      the system prompt (LLM runs)
-//     requests.jsonl  every request and reply (LLM runs), without the system prompt
-//     items.jsonl     one line per item: outputs, scores, row translations
-//     summary.json    the aggregate metrics, one entry per output
+//     schema.json     the response schemas (LLM runs)
+//     requests.jsonl  every request and the whole reply, the provider's own
+//                     response included, or the error (LLM runs); without the
+//                     system prompt and schema
+//     items.jsonl     one line per item: the dataset item, the translator's
+//                     input, outputs, scores, row translations with attempts
+//     outputs/<output>/<item>.cp   each output as CrochetPARADE text
+//     summary.json    the aggregate metrics, one entry per output; `stopped`
+//                     when an error ended the run early
+//     summary.md      the same as a Markdown table
+//
+// Stitch graphs are not saved: they are large, and the vendored parser
+// (config.json's commit) rebuilds them exactly from the .cp files.
 //
 // The rule-based translator yields two outputs per item (see rules.ts); the
 // LLM translator yields one.
 
 import { spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import type { RowTranslation, Usage } from "@crochet-model/core";
+import type { RowTranslation, TranslatedPattern, Usage } from "@crochet-model/core";
 import { createNodeValidator, VENDOR_DIR } from "@crochet-model/core/node";
 import {
   API_KEY_ENV,
@@ -24,12 +35,16 @@ import {
   isFatal,
   listModels,
   ModelError,
+  outputFormat,
+  RowResponse,
+  WholeResponse,
   promptVersion,
   settingsOf,
   systemPrompt,
   translatePattern,
   translateWhole,
   type ModelInfo,
+  type TranslateInput,
   type TranslateOptions,
   type TranslatorModel,
 } from "@crochet-model/translator";
@@ -39,7 +54,7 @@ import { costOf, priceOf } from "./pricing.ts";
 import { translateWithRules, type RulesOutput } from "./rules.ts";
 import { checkGold, scoreItem, type GoldCheck, type ItemScore } from "./score.ts";
 import { DATA_DIR, RUNS_DIR } from "./sources.ts";
-import { summarise, type Summary } from "./summary.ts";
+import { markdownTable, summarise, type Summary } from "./summary.ts";
 
 const { validate } = createNodeValidator();
 
@@ -61,6 +76,8 @@ export interface RunOptions {
 export interface ItemRecord {
   id: string;
   name: string;
+  /** The dataset item as loaded: English, gold, context, stated count. */
+  item?: EvalItem;
   ms: number;
   gold?: GoldCheck;
   /** By output name. */
@@ -72,6 +89,10 @@ export interface ItemRecord {
   error?: string;
   rules?: Omit<RulesOutput, "cp" | "compiledCp">;
   llm?: {
+    /** What the translator was given: segmented rows, notes, given rows. */
+    input: TranslateInput;
+    answers: TranslatedPattern["answers"];
+    promptVersion: string;
     usage: Usage;
     costUsd?: number;
     requests: number;
@@ -89,7 +110,15 @@ export function llmOutputName(c: LlmConfig): string {
 }
 
 export async function runEvaluation(options: RunOptions): Promise<{ dir: string; summaries: Summary[] }> {
-  const log = options.log ?? ((line: string) => console.error(line));
+  // Every line also goes to run.log once the run directory exists.
+  const print = options.log ?? ((line: string) => console.error(line));
+  const early: string[] = [];
+  let logFile: string | undefined;
+  const log = (line: string) => {
+    print(line);
+    if (logFile) appendFileSync(logFile, `${line}\n`);
+    else early.push(line);
+  };
   let items = loadDataset(options.dataset);
   if (options.ids) items = items.filter((i) => options.ids!.includes(i.id));
   items = items.slice(0, options.limit);
@@ -121,6 +150,8 @@ export async function runEvaluation(options: RunOptions): Promise<{ dir: string;
   const stamp = started.toISOString().replace(/[-:]/g, "").replace(/\..*/, "").replace("T", "-");
   const dir = `${RUNS_DIR}${stamp}-${options.translator}-${options.dataset}/`;
   mkdirSync(dir, { recursive: true });
+  logFile = `${dir}run.log`;
+  writeFileSync(logFile, early.map((l) => `${l}\n`).join(""));
 
   const sources = existsSync(`${DATA_DIR}SOURCES.json`)
     ? (JSON.parse(readFileSync(`${DATA_DIR}SOURCES.json`, "utf8")) as Record<string, unknown>)
@@ -144,25 +175,37 @@ export async function runEvaluation(options: RunOptions): Promise<{ dir: string;
   const done = (record: ItemRecord) => {
     records.push(record);
     appendFileSync(`${dir}items.jsonl`, `${JSON.stringify(record)}\n`);
+    for (const [name, text] of Object.entries(record.outputs)) {
+      const outDir = `${dir}outputs/${slug(name)}/`;
+      mkdirSync(outDir, { recursive: true });
+      writeFileSync(`${outDir}${slug(record.id)}.cp`, text.endsWith("\n") || text === "" ? text : `${text}\n`);
+    }
     const mark = (s: ItemScore) => (s.parses ? "ok" : s.nonEmpty ? "invalid" : "empty");
     const marks = Object.values(record.scores).map(mark).join(" / ");
     const cost = record.llm?.costUsd === undefined ? "" : `, $${record.llm.costUsd.toFixed(3)}`;
     log(`[${records.length}/${items.length}] ${record.id} ${marks || "skipped"} (${record.ms} ms${cost})${record.error ? ` ${record.error}` : ""}`);
   };
 
-  let outputs: string[];
+  const outputs = llm ? [llmOutputName(llm)] : RULES_OUTPUTS;
   let batches: BatchModel["batches"] | undefined;
-  if (!llm) {
-    outputs = RULES_OUTPUTS;
-    for (const item of items) done(runRules(item));
-  } else {
-    outputs = [llmOutputName(llm)];
-    writeFileSync(`${dir}prompt.txt`, systemPrompt());
-    batches = batch?.batches;
-    const model = new LoggingModel(batch ?? direct!, `${dir}requests.jsonl`);
-    const tasks = items.map((item) => () => runLlm(item, llm, model, outputs[0]!, price).then(done));
-    if (batch) await batch.all(tasks);
-    else await pool(tasks, llm.concurrency);
+  let stopped: string | undefined;
+  try {
+    if (!llm) {
+      for (const item of items) done(runRules(item));
+    } else {
+      writeFileSync(`${dir}prompt.txt`, systemPrompt());
+      const schemas = { row: outputFormat(RowResponse).schema, whole: outputFormat(WholeResponse).schema };
+      writeFileSync(`${dir}schema.json`, `${JSON.stringify(schemas, null, 2)}\n`);
+      batches = batch?.batches;
+      const model = new LoggingModel(batch ?? direct!, `${dir}requests.jsonl`);
+      const tasks = items.map((item) => () => runLlm(item, llm, model, outputs[0]!, price).then(done));
+      if (batch) await batch.all(tasks);
+      else await pool(tasks, llm.concurrency);
+    }
+  } catch (error) {
+    // Keep what finished: the summary covers the items done so far.
+    stopped = error instanceof Error ? error.message : String(error);
+    log(`stopped: ${stopped}`);
   }
 
   const order = new Map(items.map((item, i) => [item.id, i]));
@@ -170,8 +213,10 @@ export async function runEvaluation(options: RunOptions): Promise<{ dir: string;
   const summaries = outputs.map((output) => summarise(options.dataset, output, records));
   writeFileSync(
     `${dir}summary.json`,
-    `${JSON.stringify({ ...config, finishedAt: new Date().toISOString(), ...(batches ? { batches } : {}), summaries }, null, 2)}\n`,
+    `${JSON.stringify({ ...config, finishedAt: new Date().toISOString(), ...(stopped ? { stopped } : {}), ...(batches ? { batches } : {}), summaries }, null, 2)}\n`,
   );
+  writeFileSync(`${dir}summary.md`, `${markdownTable(summaries)}\n${stopped ? `\nStopped early: ${stopped}\n` : ""}`);
+  if (stopped) throw new Error(`${stopped} (partial results in ${dir})`);
   return { dir, summaries };
 }
 
@@ -183,6 +228,7 @@ function runRules(item: EvalItem): ItemRecord {
   return {
     id: item.id,
     name: item.name,
+    item,
     ms: Math.round(performance.now() - t0),
     gold,
     outputs: { rules: cp, "rules-compiled": compiledCp },
@@ -235,7 +281,7 @@ async function runLlm(
 ): Promise<ItemRecord> {
   const t0 = performance.now();
   const gold = checkGold(item);
-  const base = { id: item.id, name: item.name, gold };
+  const base = { id: item.id, name: item.name, item, gold };
   if (gold && !gold.ok) {
     return { ...base, ms: 0, outputs: {}, scores: {}, rows: { found: 0, kept: 0 }, error: "skipped: gold does not parse" };
   }
@@ -262,6 +308,9 @@ async function runLlm(
       scores: { [output]: scoreItem(item, text) },
       rows: { found: todo.length, kept: translations.filter((t) => t.status !== "invalid").length },
       llm: {
+        input,
+        answers: result.pattern.answers,
+        promptVersion: result.pattern.promptVersion,
         usage: result.usage,
         costUsd: result.costUsd ?? costOf(price, result.usage, c.batch),
         requests: result.requests,
@@ -282,6 +331,11 @@ async function runLlm(
       error: `translator failed: ${String(error)}`,
     };
   }
+}
+
+/** A file name from an output name or item id. */
+function slug(name: string): string {
+  return name.replace(/[^A-Za-z0-9._-]+/g, "-");
 }
 
 /** Runs tasks with at most `n` at a time. */

@@ -17,6 +17,7 @@
 | "sl st to first sc to join" | `ss@[%,0]`, or `ss@[%,1]` after a leading `ch` |
 | "join with sl st to top of beg ch-3" | `ss@[%,2]` |
 | "ch 1, turn" at the end of a row | `turn` ends this line; `ch` starts the next |
+| "beginning in the first st", "starting with the first stitch" | The usual order after a turn (`Nsc`, `Ndc`): it names where the row starts, not a change of direction; never `@[-1,0]` for it |
 | "ch 3 (counts as dc)" at the start of a row | `3ch,sk,…` |
 | "dc in top of turning ch" | `dc@[-1,2]` when the previous line began with `3ch` |
 | "skip next 2 sts" | `2sk` |

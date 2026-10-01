@@ -53,6 +53,8 @@ export interface ModelReply {
   costUsd?: number;
   /** The model that answered (a fallback may differ from the one asked). */
   model: string;
+  /** The provider's whole response, as it came, for the run logs. */
+  response?: unknown;
 }
 
 export interface TranslatorModel {

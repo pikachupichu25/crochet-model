@@ -167,6 +167,7 @@ export class CompatModel implements TranslatorModel {
       usage: compatUsage(usage),
       ...(typeof usage?.cost === "number" ? { costUsd: usage.cost } : {}),
       model: completion.model,
+      response: completion,
     };
   }
 }

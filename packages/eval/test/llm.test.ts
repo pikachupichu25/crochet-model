@@ -11,7 +11,10 @@ import {
 import Anthropic from "@anthropic-ai/sdk";
 import { describe, expect, it } from "vitest";
 import type { EvalItem } from "../src/datasets.ts";
-import { estimateCost, goldAnswerer, itemInput, type LlmConfig, type QuestionLog } from "../src/llm.ts";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { errorRecord, estimateCost, goldAnswerer, itemInput, LoggingModel, type LlmConfig, type QuestionLog } from "../src/llm.ts";
 import { costOf, priceOf } from "../src/pricing.ts";
 import { scoreItem } from "../src/score.ts";
 
@@ -150,5 +153,29 @@ describe("isFatal", () => {
     expect(isFatal(anthropicError(new Anthropic.APIConnectionError({ message: "down" })))).toBe(false);
     expect(isFatal(new Error("batch request expired"))).toBe(false);
     expect(isFatal(new ModelError("gemini", "no_credit", "quota"))).toBe(true);
+  });
+});
+
+describe("LoggingModel", () => {
+  it("logs the whole reply, the provider's response included, and errors with their kind", async () => {
+    const file = join(mkdtempSync(join(tmpdir(), "log-")), "requests.jsonl");
+    const ok = new LoggingModel(new ByRow([["Ch 7", { cp: "7ch" }]]), file);
+    const request = { id: "a", model: "m", effort: "medium" as const, system: [{ text: "S", cache: true }], schema: {}, maxTokens: 10,
+      messages: [{ role: "user" as const, blocks: [{ text: "P", cache: true }, { text: "Translate row [x]: Ch 7", cache: false }] }] };
+    await ok.send(request);
+    const failing = new LoggingModel({ provider: "gemini", send: async () => { throw new ModelError("gemini", "no_credit", "quota", { cause: { status: 429, error: { code: 8 } } }); } }, file);
+    await expect(failing.send(request)).rejects.toThrow("quota");
+    const [first, second] = readFileSync(file, "utf8").trim().split("\n").map((l) => JSON.parse(l));
+    expect(first.request).not.toHaveProperty("system");
+    expect(first.request).not.toHaveProperty("schema");
+    expect(first.reply).toMatchObject({ text: expect.stringContaining("7ch"), raw: expect.any(Array), stopReason: "end" });
+    expect(typeof first.ms).toBe("number");
+    expect(second.error).toMatchObject({ kind: "no_credit", provider: "gemini", cause: { status: 429, body: { code: 8 } } });
+  });
+
+  it("records plain errors and CLI results as data", () => {
+    expect(errorRecord("x")).toEqual({ message: "x" });
+    const cli = { is_error: true, result: "Failed to authenticate" };
+    expect(errorRecord(new ModelError("claude-code", "key_rejected", "Failed", { cause: cli })).cause).toEqual(cli);
   });
 });
