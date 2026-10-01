@@ -16,8 +16,10 @@ import {
   assemble,
   systemPrompt,
   type Effort,
+  type ModelInfo,
   type ModelReply,
   type ModelRequest,
+  type ProviderId,
   type QuestionContext,
   type TranslateInput,
   type TranslatorModel,
@@ -28,6 +30,7 @@ import { costOf } from "./pricing.ts";
 const { validate } = createNodeValidator();
 
 export interface LlmConfig {
+  provider: ProviderId;
   model: string;
   effort: Effort;
   repairEffort: Effort;
@@ -131,23 +134,25 @@ export function goldAnswerer(goldRows: string[] | undefined, log: QuestionLog[])
 
 /** Logs every request (without the shared system prompt) and reply to a file. */
 export class LoggingModel implements TranslatorModel {
+  readonly provider: ProviderId;
   private inner: TranslatorModel;
   private file: string;
 
   constructor(inner: TranslatorModel, file: string) {
+    this.provider = inner.provider;
     this.inner = inner;
     this.file = file;
   }
 
   async send(request: ModelRequest): Promise<ModelReply> {
-    const { system, format, ...rest } = request;
+    const { system, schema, ...rest } = request;
     void system;
-    void format;
+    void schema;
     try {
       const reply = await this.inner.send(request);
       appendFileSync(
         this.file,
-        `${JSON.stringify({ request: rest, reply: { text: reply.text, stopReason: reply.stopReason, usage: reply.usage, model: reply.model } })}\n`,
+        `${JSON.stringify({ request: rest, reply: { text: reply.text, stopReason: reply.stopReason, usage: reply.usage, costUsd: reply.costUsd, model: reply.model } })}\n`,
       );
       return reply;
     } catch (error) {
@@ -163,7 +168,11 @@ const OUTPUT_TOKENS: Record<Effort, number> = { low: 800, medium: 1500, high: 30
  * A rough upper estimate, from characters (about 3.5 per token) and an
  * assumed output per request by effort. Real usage is in the run summary.
  */
-export function estimateCost(items: EvalItem[], config: LlmConfig): { dollars?: number; requests: number; detail: string } {
+export function estimateCost(
+  items: EvalItem[],
+  config: LlmConfig,
+  price: ModelInfo["price"],
+): { dollars?: number; requests: number; detail: string } {
   const systemTokens = systemPrompt().length / 3.5;
   const usage: Usage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
   let requests = 0;
@@ -179,7 +188,7 @@ export function estimateCost(items: EvalItem[], config: LlmConfig): { dollars?: 
     usage.inputTokens += perPattern * (300 + (input.english.length / 3.5) * 0.5);
     usage.outputTokens += perPattern * OUTPUT_TOKENS[config.effort] * (config.mode === "whole" ? Math.max(1, todo / 2) : 1);
   }
-  const dollars = costOf(config.model, usage, config.batch);
+  const dollars = costOf(price, usage, config.batch);
   return {
     dollars,
     requests: Math.round(requests),

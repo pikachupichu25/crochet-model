@@ -47,3 +47,19 @@ export function outputFormat(schema: z.ZodType): { type: "json_schema"; schema: 
   const { type, schema: json } = zodOutputFormat(schema);
   return { type, schema: json };
 }
+
+/**
+ * The same schema in the part of JSON Schema every provider takes (SPEC
+ * §5.4): a type list such as `["string", "null"]` becomes an `anyOf`.
+ */
+export function portableSchema(schema: unknown): unknown {
+  if (Array.isArray(schema)) return schema.map(portableSchema);
+  if (!schema || typeof schema !== "object") return schema;
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(schema)) out[key] = portableSchema(value);
+  if (Array.isArray(out.type)) {
+    const { type, ...rest } = out;
+    return { ...rest, anyOf: (type as string[]).map((t) => ({ type: t })) };
+  }
+  return out;
+}

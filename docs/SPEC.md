@@ -1,6 +1,6 @@
 # Crochet Model App: Technical Specification
 
-> Status: M0 and M1 built; M2 translator built for Claude, other providers and model sweep pending  
+> Status: M0 and M1 built; M2 translator and provider adapters built, model sweep pending  
 > Last updated: 2026-10-01  
 > Purpose: define how to build what [REQUIREMENTS.md](./REQUIREMENTS.md) asks for: modules, data types, the translation loop, the evaluation harness, the server with user accounts and the yarn renderer.
 
@@ -331,7 +331,7 @@ for each row, in order:
 
 The loop talks to one interface, `TranslatorModel.send(ModelRequest) → ModelReply`. One adapter per provider maps it to that provider's API. In the app the user picks the provider and model and pays with their own key (§8); in the evaluation they are `--provider` and `--model` (§7.2).
 
-**Status:** the Anthropic adapter is built (M2), as `ClaudeModel` and `BatchModel` in `packages/translator/src/model.ts`, with Anthropic types in `ModelRequest`. Planned: the provider-neutral request below, moving the Claude code to `providers/anthropic.ts`, and the OpenAI-compatible and Gemini adapters.
+**Status: built (M2), not yet run against any API.** Code: `packages/translator/src/model.ts` (neutral types, `ModelError`, `isFatal`) and `src/providers/` (`anthropic.ts` with `ClaudeModel` and `BatchModel`; `openaiCompat.ts` with `CompatModel` for OpenAI and OpenRouter; `gemini.ts` with `GeminiModel`; `capabilities.ts`; `index.ts` with `createModel` and `listModels`). Tested against fake clients and recorded response shapes in `test/providers.test.ts`. Not built: `models.json` (it needs the sweep's scores).
 
 #### Providers
 
@@ -353,9 +353,13 @@ OpenRouter gives one key access to many hosts' models, so it is the route for pr
 ```ts
 type ProviderId = "anthropic" | "openrouter" | "gemini" | "openai";
 
+interface TranslatorModel {
+  readonly provider: ProviderId;      // the adapter knows its provider; requests do not carry it
+  send(request: ModelRequest): Promise<ModelReply>;
+}
+
 interface ModelRequest {
   id: string;                         // unique within a run; the batch custom_id
-  provider: ProviderId;
   model: string;
   effort: Effort;                     // "low" | "medium" | "high" | "xhigh" | "max"
   system: TextBlock[];
@@ -368,7 +372,7 @@ interface TextBlock { text: string; cache: boolean }   // cache: end of a cached
 
 type Turn =
   | { role: "user"; blocks: TextBlock[] }
-  | { role: "assistant"; text: string; raw: unknown };  // raw: the provider's own reply content
+  | { role: "assistant"; text: string; raw?: unknown }; // raw: the provider's own reply content
 
 interface ModelReply {
   text: string;                       // the JSON answer
@@ -380,7 +384,10 @@ interface ModelReply {
 }
 ```
 
-- **Effort** maps to the provider's nearest level, clamped to what the model accepts (`capabilities.ts`). Models without reasoning get none. This replaces today's Haiku special case.
+- **Effort** maps to the provider's nearest level at or below the one asked, clamped to what the model accepts (`capabilities.ts`). Models without reasoning get none. OpenAI and OpenRouter stop at `high`; Gemini 3 Pro takes `LOW` or `HIGH` (so `medium` becomes `LOW`), Gemini 3 Flash also `MEDIUM`; Gemini 2.5 gets a thinking budget (2k, 8k, 16k, 24k tokens); Haiku 4.5 gets neither effort nor thinking.
+- **Schema.** OpenAI's strict mode and Gemini take the schema with `type` lists (`["string", "null"]`) rewritten as `anyOf` (`portableSchema`); Anthropic gets it unchanged.
+- **OpenRouter routing:** every request sends `provider: {require_parameters: true}`, so OpenRouter only routes to hosts that honour the schema and effort, and `usage: {include: true}` for the cost. A moderation refusal (403) is a failed attempt, not a rejected key. Assistant turns replay `reasoning_details`, which carries thinking for the models that need it back.
+- **Gemini keys.** A bad Gemini key comes back as 400 with "API key" in the message; it is classed `key_rejected`. Gemini 429s (rate limit or quota) cannot be told apart and are `retryable`.
 - **Capabilities** (structured output, effort levels, explicit caching, batches) come from rules on model ids for Anthropic, Gemini and OpenAI, and from `supported_parameters` in OpenRouter's model list. A model without schema-constrained output is not offered in the app and is refused by the evaluation.
 - **Usage** is normalised: OpenAI-compatible `prompt_tokens` and Gemini `promptTokenCount` include cached tokens, so the cached part moves to `cacheReadTokens`; Gemini's thinking tokens count as output.
 - **Stop reasons** are normalised: Anthropic `refusal`, OpenAI-compatible `content_filter` and Gemini `SAFETY`, `RECITATION` or `PROHIBITED_CONTENT` all become `refusal`, which is a failed attempt (§5.5).
@@ -530,9 +537,9 @@ eval compare runs/<a> runs/<b>
 - **Providers and models:** `--provider anthropic|openrouter|gemini|openai` (default `anthropic`) and `--model` with the provider's model id. Any model the provider lists can be named; adding a model needs no code change. Keys come from the environment (`ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`, `GEMINI_API_KEY`, `OPENAI_API_KEY`), never from the server's key store. The run directory records the provider. A model reached both directly and through OpenRouter is scored once on each route: hosts can differ.
 - **Cost guard:** a run first estimates its cost from token counts and asks for confirmation above a threshold (default US$5).
 
-**Status: built (M2), not yet run against the API.** `npm run eval -- run --translator llm --dataset <name> [--model ID] [--effort …] [--repair-effort …] [--mode row|whole] [--no-repair] [--batch] [--limit N] [--ids a,b] [--concurrency N] [--max-cost USD] [--yes]`, and `npm run eval -- compare <run-a> <run-b>`. Not built: `--no-rules` (no rule-based candidate yet, §5.5). Details:
+**Status: built (M2), not yet run against any API.** `npm run eval -- run --translator llm --dataset <name> [--provider anthropic|openrouter|gemini|openai] [--model ID] [--effort …] [--repair-effort …] [--mode row|whole] [--no-repair] [--batch] [--limit N] [--ids a,b] [--concurrency N] [--max-cost USD] [--yes]`, and `npm run eval -- compare <run-a> <run-b>`. Not built: `--no-rules` (no rule-based candidate yet, §5.5). Details:
 
-- **Preflight.** Before anything else the run asks the provider's model list for the chosen model (free), checks its capabilities (§5.6), so missing credentials or a wrong model id stop it before a run directory exists.
+- **Preflight.** Before anything else the run asks the provider's model list for the chosen model (free), checks it can constrain output to a schema (§5.6), so missing credentials or a wrong model id stop it before a run directory exists.
 - **Cost guard.** The estimate is rough (characters ÷ 3.5 for input, an assumed output per request by effort) and is printed every time; above `--max-cost` (default US$5), or for a model with no price on file (`pricing.ts`, keyed by provider and model; OpenRouter prices come from its model list), the run refuses unless `--yes` is given. Actual cost comes from the recorded usage.
 - **Inputs.** StitchSwitch rows keep their 1:1 alignment with the gold lines, which also lets questions be answered from the gold (§7.3, metric 4). A CrochetBench step item is its earlier steps given as gold rows plus the target; only the target's translation is scored. Project items are segmented with `segmentPattern`. Items whose gold does not parse are skipped, not sent.
 - **The run directory** also holds `prompt.txt` (the system prompt) and `requests.jsonl` (every request without the shared system prompt, and every reply's text, stop reason, usage and model). `items.jsonl` holds each row's translation with all its attempts.

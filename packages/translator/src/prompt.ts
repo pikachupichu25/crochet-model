@@ -11,10 +11,10 @@
 
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import type Anthropic from "@anthropic-ai/sdk";
 import type { ParseError, PatternNote, PatternRow, Question } from "@crochet-model/core";
 import { builtinStitches } from "@crochet-model/core/node";
 import type { CountCheck } from "./counts.ts";
+import type { TextBlock } from "./model.ts";
 import { outputFormat, RowResponse, WholeResponse } from "./schema.ts";
 
 const read = (name: string) =>
@@ -34,8 +34,8 @@ export function systemPrompt(): string {
   return systemText;
 }
 
-export function systemBlocks(): Anthropic.TextBlockParam[] {
-  return [{ type: "text", text: systemPrompt(), cache_control: { type: "ephemeral" } }];
+export function systemBlocks(): TextBlock[] {
+  return [{ text: systemPrompt(), cache: true }];
 }
 
 /**
@@ -67,7 +67,7 @@ function rowLine(row: PatternRow): string {
 }
 
 /** User block 1: the whole pattern. Answers go last, so earlier rows keep the cache. */
-export function patternBlock(p: PatternContext): Anthropic.TextBlockParam {
+export function patternBlock(p: PatternContext): TextBlock {
   const parts = [`<pattern>\n${p.rows.map(rowLine).join("\n")}\n</pattern>`];
   if (p.notes.length) {
     parts.push(`<notes>\n${p.notes.map((n) => n.text).join("\n")}\n</notes>`);
@@ -82,7 +82,7 @@ export function patternBlock(p: PatternContext): Anthropic.TextBlockParam {
     );
     parts.push(`<answers>\n${lines.join("\n")}\n</answers>`);
   }
-  return { type: "text", text: parts.join("\n\n"), cache_control: { type: "ephemeral" } };
+  return { text: parts.join("\n\n"), cache: true };
 }
 
 export interface AcceptedRow {
@@ -95,7 +95,7 @@ export interface AcceptedRow {
 }
 
 /** User block 2: what is accepted so far and the row to translate. */
-export function rowBlock(accepted: AcceptedRow[], target: PatternRow): Anthropic.TextBlockParam {
+export function rowBlock(accepted: AcceptedRow[], target: PatternRow): TextBlock {
   const done = accepted.length
     ? accepted
         .map((a) => {
@@ -115,7 +115,7 @@ export function rowBlock(accepted: AcceptedRow[], target: PatternRow): Anthropic
   const last = accepted.flatMap((a) => a.parserRows).at(-1);
   const prev = last ? ` The previous parser row (${last.row}) has ${last.count} stitches.` : "";
   return {
-    type: "text",
+    cache: false,
     text:
       `<accepted>\n${done}\n</accepted>\n\n` +
       `Translate row [${target.id}]: ${target.label ? `${target.label}: ` : ""}${target.text}\n` +
@@ -124,13 +124,13 @@ export function rowBlock(accepted: AcceptedRow[], target: PatternRow): Anthropic
 }
 
 /** Whole-pattern mode: one request for every row. */
-export function wholeBlock(rows: PatternRow[], given: AcceptedRow[]): Anthropic.TextBlockParam {
+export function wholeBlock(rows: PatternRow[], given: AcceptedRow[]): TextBlock {
   const prefix = given.length
     ? `These rows are already translated; do not return them:\n${given.map((a) => `[${a.row.id}] ${a.cp}`).join("\n")}\n\n`
     : "";
   const ids = rows.map((r) => r.id).join(", ");
   return {
-    type: "text",
+    cache: false,
     text:
       `${prefix}Translate every remaining row of the pattern in one response: ${ids}. ` +
       "Return one entry per row id, in order. Leave `cp` empty for a row that makes no stitches.",

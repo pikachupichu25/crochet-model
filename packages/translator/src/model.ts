@@ -1,222 +1,94 @@
-// Calls to Claude (docs/SPEC.md §5.6). The loop talks to a TranslatorModel,
-// so tests can script replies and the evaluation can swap in batching.
+// The provider-neutral model interface (docs/SPEC.md §5.6). The loop talks to
+// a TranslatorModel; one adapter per provider (providers/) maps it to that
+// provider's API, so tests can script replies and the evaluation can swap in
+// batching.
 
-import Anthropic from "@anthropic-ai/sdk";
 import type { Usage } from "@crochet-model/core";
 
+export type ProviderId = "anthropic" | "openrouter" | "gemini" | "openai";
+
+export const PROVIDERS: ProviderId[] = ["anthropic", "openrouter", "gemini", "openai"];
+
 export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
+
+/** `cache`: this block ends a cached prefix (SPEC §5.2). */
+export interface TextBlock {
+  text: string;
+  cache: boolean;
+}
+
+export type Turn =
+  | { role: "user"; blocks: TextBlock[] }
+  /** `raw`: the provider's own reply content, replayed unchanged (thinking blocks, thought signatures). */
+  | { role: "assistant"; text: string; raw?: unknown };
 
 export interface ModelRequest {
   /** Unique within a run; becomes the batch custom_id. */
   id: string;
   model: string;
   effort: Effort;
-  system: Anthropic.TextBlockParam[];
-  messages: Anthropic.MessageParam[];
-  format: { type: "json_schema"; schema: Record<string, unknown> };
+  system: TextBlock[];
+  messages: Turn[];
+  /** JSON Schema the reply must match (SPEC §5.4). */
+  schema: Record<string, unknown>;
   maxTokens: number;
 }
 
+export type StopReason = "end" | "max_tokens" | "refusal" | "other";
+
 export interface ModelReply {
-  /** The assistant content, to append unchanged to the conversation. */
-  content: Anthropic.ContentBlockParam[];
+  /** The JSON answer. */
   text: string;
-  stopReason: string | null;
+  /** The provider's reply content, for the next assistant turn. */
+  raw: unknown;
+  stopReason: StopReason;
   usage: Usage;
+  /** US$, when the provider reports it (OpenRouter). */
+  costUsd?: number;
   /** The model that answered (a fallback may differ from the one asked). */
   model: string;
 }
 
 export interface TranslatorModel {
+  readonly provider: ProviderId;
   send(request: ModelRequest): Promise<ModelReply>;
 }
 
-/** Thinking and effort settings that differ by model. */
-function modelSettings(model: string, effort: Effort) {
-  // Haiku 4.5 rejects `effort` and takes no adaptive thinking.
-  if (model.startsWith("claude-haiku-4")) return {};
-  return { thinking: { type: "adaptive" as const }, effort };
-}
-
-export function requestParams(r: ModelRequest): Anthropic.MessageCreateParamsNonStreaming {
-  const { thinking, effort } = modelSettings(r.model, r.effort);
-  return {
-    model: r.model,
-    max_tokens: r.maxTokens,
-    system: r.system,
-    messages: r.messages,
-    ...(thinking ? { thinking } : {}),
-    output_config: { format: r.format, ...(effort ? { effort } : {}) },
-  };
-}
-
-function toReply(message: {
-  content: unknown[];
-  stop_reason: string | null;
-  usage: Anthropic.Usage;
-  model: string;
-}): ModelReply {
-  const content = message.content as Anthropic.ContentBlock[];
-  return {
-    content: content as unknown as Anthropic.ContentBlockParam[],
-    text: content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join(""),
-    stopReason: message.stop_reason,
-    usage: {
-      inputTokens: message.usage.input_tokens,
-      outputTokens: message.usage.output_tokens,
-      cacheReadTokens: message.usage.cache_read_input_tokens ?? 0,
-      cacheWriteTokens: message.usage.cache_creation_input_tokens ?? 0,
-    },
-    model: message.model,
-  };
-}
-
-export interface ClaudeModelOptions {
-  client?: Anthropic;
-  /**
-   * Re-run a refused request on Anthropic's recommended fallback model
-   * (`fallbacks: "default"`). The app turns this on; evaluation runs leave it
-   * off so live and batch runs are scored alike (Batches reject it).
-   */
-  fallbacks?: boolean;
-}
-
-/** One Messages API request per call. The SDK retries 429, 5xx and connection errors. */
-export class ClaudeModel implements TranslatorModel {
-  private client: Anthropic;
-  private fallbacks: boolean;
-
-  constructor(options: ClaudeModelOptions = {}) {
-    this.client = options.client ?? new Anthropic({ maxRetries: 4 });
-    this.fallbacks = options.fallbacks ?? false;
-  }
-
-  async send(request: ModelRequest): Promise<ModelReply> {
-    const params = requestParams(request);
-    if (!this.fallbacks) return toReply(await this.client.messages.create(params));
-    const message = await this.client.beta.messages.create({
-      ...(params as Anthropic.Beta.MessageCreateParamsNonStreaming),
-      betas: ["server-side-fallback-2026-07-01"],
-      fallbacks: "default",
-    });
-    return toReply(message);
-  }
-}
-
 /**
- * Sends requests through the Message Batches API at half price.
- *
- * Each pattern's loop waits on one request at a time, and later rows depend
- * on earlier ones. So requests are collected until every active loop is
- * waiting, then sent as one batch: the first rows of all patterns, then the
- * next round (second rows and first repairs), and so on. Callers bracket each
- * loop with `enter()` and `leave()`.
+ * What went wrong, as the loop and the server act on it (SPEC §5.6). Only
+ * `retryable` errors become failed attempts; the rest stop the pattern.
  */
-export class BatchModel implements TranslatorModel {
-  private client: Anthropic;
-  private active = 0;
-  private flushing = false;
-  private pending: {
-    request: ModelRequest;
-    resolve: (reply: ModelReply) => void;
-    reject: (error: unknown) => void;
-  }[] = [];
-  /** Batches sent, for the run record. */
-  readonly batches: { id: string; requests: number }[] = [];
+export type ErrorKind = "retryable" | "key_rejected" | "no_credit" | "bad_model" | "bad_request";
 
-  private options: { client?: Anthropic; pollMs?: number; log?: (line: string) => void };
-
-  constructor(options: BatchModel["options"] = {}) {
-    this.options = options;
-    this.client = options.client ?? new Anthropic({ maxRetries: 4 });
-  }
-
-  /**
-   * Runs pattern loops together, each bracketed by enter() and leave(). All
-   * enter before any starts, so the first request cannot go out alone.
-   */
-  async all<T>(tasks: (() => Promise<T>)[]): Promise<T[]> {
-    for (const _ of tasks) this.enter();
-    return Promise.all(
-      tasks.map(async (task) => {
-        try {
-          return await task();
-        } finally {
-          this.leave();
-        }
-      }),
-    );
-  }
-
-  enter() {
-    this.active += 1;
-  }
-
-  leave() {
-    this.active -= 1;
-    this.maybeFlush();
-  }
-
-  send(request: ModelRequest): Promise<ModelReply> {
-    return new Promise((resolve, reject) => {
-      this.pending.push({ request, resolve, reject });
-      this.maybeFlush();
-    });
-  }
-
-  private maybeFlush() {
-    if (this.flushing || this.pending.length === 0 || this.pending.length < this.active) return;
-    const batch = this.pending.splice(0);
-    this.flushing = true;
-    this.run(batch)
-      .catch((error) => {
-        for (const p of batch) p.reject(error);
-      })
-      .finally(() => {
-        this.flushing = false;
-        this.maybeFlush();
-      });
-  }
-
-  private async run(batch: BatchModel["pending"]) {
-    const byId = new Map(batch.map((p) => [customId(p.request.id), p]));
-    if (byId.size !== batch.length) throw new Error("duplicate batch custom_id");
-    const created = await this.client.messages.batches.create({
-      requests: [...byId].map(([custom_id, p]) => ({ custom_id, params: requestParams(p.request) })),
-    });
-    this.batches.push({ id: created.id, requests: batch.length });
-    this.options.log?.(`batch ${created.id}: ${batch.length} requests`);
-    const pollMs = this.options.pollMs ?? 30_000;
-    let status = created;
-    while (status.processing_status !== "ended") {
-      await new Promise((r) => setTimeout(r, pollMs));
-      status = await this.client.messages.batches.retrieve(created.id);
-    }
-    for await (const result of await this.client.messages.batches.results(created.id)) {
-      const p = byId.get(result.custom_id);
-      if (!p) continue;
-      byId.delete(result.custom_id);
-      if (result.result.type === "succeeded") p.resolve(toReply(result.result.message));
-      else if (result.result.type === "errored") {
-        const { type, message } = result.result.error.error;
-        p.reject(new BatchRequestError(type, `batch request errored: ${type}: ${message}`));
-      } else p.reject(new Error(`batch request ${result.result.type}`));
-    }
-    for (const p of byId.values()) p.reject(new Error("batch result missing"));
+export class ModelError extends Error {
+  readonly kind: ErrorKind;
+  readonly provider: ProviderId;
+  constructor(provider: ProviderId, kind: ErrorKind, message: string, options?: { cause?: unknown }) {
+    super(`${provider}: ${kind}: ${message}`, options);
+    this.kind = kind;
+    this.provider = provider;
   }
 }
 
-/** One request in a batch that errored, with the API's error type. */
-export class BatchRequestError extends Error {
-  readonly errorType: string;
-  constructor(errorType: string, message: string) {
-    super(message);
-    this.errorType = errorType;
-  }
+/** The error kind for an HTTP status, after the SDK has retried what it retries. */
+export function kindOfStatus(status: number | undefined): ErrorKind {
+  if (status === undefined || status === 408 || status === 409 || status === 429 || status >= 500) return "retryable";
+  if (status === 401 || status === 403) return "key_rejected";
+  if (status === 402) return "no_credit";
+  if (status === 404) return "bad_model";
+  return "bad_request";
 }
 
-/** Batch custom_ids allow letters, digits, `_` and `-`, up to 64 characters. */
-export function customId(id: string): string {
-  const clean = id.replace(/[^A-Za-z0-9_-]/g, "_");
-  return clean.length <= 64 ? clean : clean.slice(clean.length - 64);
+/** Bugs or setup problems, not translation failures: they stop the pattern. */
+export function isFatal(error: unknown): boolean {
+  return error instanceof ModelError && error.kind !== "retryable";
+}
+
+/** A model the provider lists for this key. */
+export interface ModelInfo {
+  id: string;
+  /** Constrains output to a JSON Schema; false means it cannot translate (SPEC §5.4). */
+  structuredOutput: boolean;
+  /** US$ per million tokens, when the provider publishes it (OpenRouter). */
+  price?: { input: number; output: number; cacheRead?: number; cacheWrite?: number };
 }

@@ -3,7 +3,8 @@ import { segmentPattern } from "@crochet-model/core";
 import { createNodeValidator } from "@crochet-model/core/node";
 import { describe, expect, it } from "vitest";
 import { assemble, translatePattern, translateWhole, type TranslateOptions } from "../src/loop.ts";
-import { BatchModel, type ModelReply, type ModelRequest, type TranslatorModel } from "../src/model.ts";
+import { ModelError, type ModelReply, type ModelRequest, type TranslatorModel, type Turn } from "../src/model.ts";
+import { BatchModel } from "../src/providers/anthropic.ts";
 import type { RowResponse } from "../src/schema.ts";
 
 const { validate } = createNodeValidator();
@@ -12,9 +13,9 @@ const reply = (r: Partial<RowResponse> | object, extra: Partial<ModelReply> = {}
   const body = "rows" in r ? r : { cp: "", expectedCount: null, confidence: "high", assumptions: [], question: null, amendPrevious: [], ...r };
   const text = JSON.stringify(body);
   return {
-    content: [{ type: "text", text }],
+    raw: [{ type: "text", text }],
     text,
-    stopReason: "end_turn",
+    stopReason: "end",
     usage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 10, cacheWriteTokens: 0 },
     model: "fake",
     ...extra,
@@ -23,6 +24,7 @@ const reply = (r: Partial<RowResponse> | object, extra: Partial<ModelReply> = {}
 
 /** Replies in order; records every request. */
 class Scripted implements TranslatorModel {
+  readonly provider = "anthropic" as const;
   requests: ModelRequest[] = [];
   private replies: ModelReply[];
   constructor(replies: ModelReply[]) {
@@ -49,6 +51,9 @@ const options = (model: TranslatorModel, extra: Partial<TranslateOptions> = {}):
 
 const input = (english: string) => ({ english, ...segmentPattern(english) });
 
+/** The text of a user turn's blocks. */
+const userText = (turn: Turn | undefined) => (turn?.role === "user" ? turn.blocks.map((b) => b.text).join("\n") : "");
+
 describe("translatePattern", () => {
   it("translates row by row and accepts rows that parse with the stated count", async () => {
     const model = new Scripted([reply({ cp: "7ch,turn" }), reply({ cp: "sk,6sc,turn", expectedCount: 6 })]);
@@ -67,15 +72,15 @@ describe("translatePattern", () => {
     const model = new Scripted([reply({ cp: "7ch,turn" }), reply({ cp: "sk,6sc,turn" })]);
     await translatePattern(input("Row 1: Ch 7.\nRow 2: Sc across. (6)"), options(model));
     const second = model.requests[1]!;
-    expect(second.system[0]!.cache_control).toEqual({ type: "ephemeral" });
-    const [patternBlock, rowBlock] = second.messages[0]!.content as Anthropic.TextBlockParam[];
-    expect(patternBlock!.cache_control).toEqual({ type: "ephemeral" });
+    expect(second.system[0]!.cache).toBe(true);
+    const [patternBlock, rowBlock] = (second.messages[0] as Extract<Turn, { role: "user" }>).blocks;
+    expect(patternBlock!.cache).toBe(true);
     expect(patternBlock!.text).toContain("Row 2: Sc across. (6)");
-    expect(rowBlock!.cache_control).toBeUndefined();
+    expect(rowBlock!.cache).toBe(false);
     expect(rowBlock!.text).toContain("(parser row 0: 7 stitches)\n7ch,turn");
     expect(rowBlock!.text).toContain("states a count of 6");
     // The first two blocks are byte-identical across rows, so they hit the cache.
-    expect(model.requests[0]!.messages[0]!.content).toContainEqual(patternBlock);
+    expect((model.requests[0]!.messages[0] as Extract<Turn, { role: "user" }>).blocks).toContainEqual(patternBlock);
   });
 
   it("repairs a parse error by appending to the conversation, at the repair effort", async () => {
@@ -87,7 +92,7 @@ describe("translatePattern", () => {
     const repair = model.requests[2]!;
     expect(repair.effort).toBe("high");
     expect(repair.messages.map((m) => m.role)).toEqual(["user", "assistant", "user"]);
-    expect(repair.messages[2]!.content).toContain("Stitch type not defined");
+    expect(userText(repair.messages[2])).toContain("Stitch type not defined");
   });
 
   it("repairs a count mismatch, allowing for an uncounted beginning chain", async () => {
@@ -104,7 +109,7 @@ describe("translatePattern", () => {
     const row3 = pattern.translations[pattern.rows[2]!.id]!;
     expect(row3).toMatchObject({ status: "valid", cp: "ch,4sc" });
     expect(row3.attempts[0]!.rejected).toBe("count 3, stated 4");
-    expect(model.requests[3]!.messages.at(-1)!.content).toContain(
+    expect(userText(model.requests[3]!.messages.at(-1))).toContain(
       "states 4 stitches and the parser counts 4 on its last line (3 allowing for the 1 beginning chain)",
     );
   });
@@ -212,7 +217,7 @@ describe("translatePattern", () => {
     const { pattern } = await translatePattern({ english, rows, notes: [], given }, options(model));
     expect(pattern.translations[rows[2]!.id]!.attempts[0]!.rejected).toBe("amendment rejected");
     expect(pattern.translations[rows[1]!.id]!.cp).toBe("sk,sc,3ch,2sk,2sc,turn");
-    const rowBlock = (model.requests[0]!.messages[0]!.content as Anthropic.TextBlockParam[])[1]!.text;
+    const rowBlock = (model.requests[0]!.messages[0] as Extract<Turn, { role: "user" }>).blocks[1]!.text;
     expect(rowBlock).toContain("given, cannot be amended");
   });
 
@@ -233,6 +238,26 @@ describe("translatePattern", () => {
     expect(row3).toMatchObject({ status: "count_mismatch", cp: "sk,3sc" });
     expect(row3!.attempts).toHaveLength(1);
     expect(model.requests).toHaveLength(5);
+  });
+
+  it("stops on a rejected key, and records a retryable error as a failed attempt", async () => {
+    const failing = (error: Error): TranslatorModel => ({
+      provider: "openrouter",
+      send: async () => {
+        throw error;
+      },
+    });
+    await expect(
+      translatePattern(input("Row 1: Ch 7."), options(failing(new ModelError("openrouter", "key_rejected", "bad key")))),
+    ).rejects.toThrow("openrouter: key_rejected: bad key");
+    const { pattern } = await translatePattern(
+      input("Row 1: Ch 7."),
+      options(failing(new ModelError("openrouter", "retryable", "overloaded"))),
+    );
+    const row = pattern.translations[pattern.rows[0]!.id]!;
+    expect(row.status).toBe("invalid");
+    expect(row.attempts[0]).toMatchObject({ provider: "openrouter", rejected: "request failed" });
+    expect(pattern.provider).toBe("openrouter");
   });
 
   it("marks a refused row invalid without retrying", async () => {
@@ -263,7 +288,7 @@ describe("translateWhole", () => {
       reply({ rows: [{ rowId: rows[0]!.id, cp: "5ch,turn" }, { rowId: rows[1]!.id, cp: "sk,4sc" }], assumptions: [] }),
     ]);
     const { pattern } = await translateWhole({ english: "", rows, notes: [] }, options(model));
-    const repair = model.requests[1]!.messages.at(-1)!.content as string;
+    const repair = userText(model.requests[1]!.messages.at(-1));
     expect(repair).toContain("cut off at the token limit");
     expect(repair).toContain("for every row");
     expect(assemble(pattern)).toBe("5ch,turn\nsk,4sc");
@@ -318,7 +343,7 @@ describe("BatchModel", () => {
                   custom_id: id,
                   result: {
                     type: "succeeded",
-                    message: { content: r.content, stop_reason: "end_turn", model: "fake", usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } },
+                    message: { content: r.raw, stop_reason: "end_turn", model: "fake", usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } },
                   },
                 };
               }

@@ -29,9 +29,8 @@ import {
   type Usage,
   type ValidationResult,
 } from "@crochet-model/core";
-import Anthropic from "@anthropic-ai/sdk";
 import { countMatches, lastRowCount } from "./counts.ts";
-import { BatchRequestError, type Effort, type ModelReply, type TranslatorModel } from "./model.ts";
+import { isFatal, type Effort, type ModelReply, type TranslatorModel, type Turn } from "./model.ts";
 import {
   amendmentRepair,
   countRepair,
@@ -86,17 +85,20 @@ export interface TranslateResult {
   requests: number;
   /** The models that answered, when a fallback took over. */
   models: string[];
+  /** US$ as the provider reported it, when every reply carried a cost (OpenRouter). */
+  costUsd?: number;
 }
 
 const DEFAULT_ATTEMPTS = 3;
 const DEFAULT_MAX_TOKENS = 16_000;
 
 export function settingsOf(
-  o: Pick<TranslateOptions, "modelName" | "effort" | "repairEffort" | "maxAttempts">,
+  o: Pick<TranslateOptions, "modelName" | "effort" | "repairEffort" | "maxAttempts"> & { provider: string },
   mode: "row" | "whole",
 ) {
   return {
     mode,
+    provider: o.provider,
     model: o.modelName,
     effort: o.effort,
     repairEffort: o.repairEffort,
@@ -155,6 +157,8 @@ class PatternTranslator {
   private usage = zeroUsage();
   private requests = 0;
   private models = new Set<string>();
+  /** Undefined once a reply has no reported cost. */
+  private cost: number | undefined = 0;
 
   private input: TranslateInput;
   private o: TranslateOptions;
@@ -179,7 +183,7 @@ class PatternTranslator {
     return last ? last.row + 1 : 0;
   }
 
-  private async send(id: string, effort: Effort, messages: Anthropic.MessageParam[], whole: boolean): Promise<ModelReply> {
+  private async send(id: string, effort: Effort, messages: Turn[], whole: boolean): Promise<ModelReply> {
     this.requests += 1;
     const reply = await this.o.model.send({
       id: `${this.o.idPrefix}-${id}`,
@@ -187,11 +191,12 @@ class PatternTranslator {
       effort,
       system: systemBlocks(),
       messages,
-      format: outputFormat(whole ? WholeResponse : RowResponse),
+      schema: outputFormat(whole ? WholeResponse : RowResponse).schema,
       maxTokens: this.o.maxTokens ?? DEFAULT_MAX_TOKENS,
     });
     addUsage(this.usage, reply.usage);
     this.models.add(reply.model);
+    if (this.cost !== undefined) this.cost = reply.costUsd === undefined ? undefined : this.cost + reply.costUsd;
     return reply;
   }
 
@@ -225,8 +230,8 @@ class PatternTranslator {
     const prefixRows = this.parserRowCount();
     const oldGraph = prefix ? this.graphRows(prefix) : [];
     const afterInvalid = Object.values(this.translations).some((t) => t.status === "invalid");
-    const messages: Anthropic.MessageParam[] = [
-      { role: "user", content: [patternBlock(this.context), rowBlock(this.accepted, target)] },
+    const messages: Turn[] = [
+      { role: "user", blocks: [patternBlock(this.context), rowBlock(this.accepted, target)] },
     ];
     const attempts: Attempt[] = [];
 
@@ -252,12 +257,12 @@ class PatternTranslator {
         reply = await this.send(`${target.id}-${attempt}`, attempt ? this.o.repairEffort : this.o.effort, messages, false);
       } catch (error) {
         if (isFatal(error)) throw error;
-        attempts.push({ cp: "", validation: failed(`request failed: ${String(error)}`), model: this.o.modelName, usage: zeroUsage(), rejected: "request failed" });
+        attempts.push({ cp: "", validation: failed(`request failed: ${String(error)}`), provider: this.o.model.provider, model: this.o.modelName, usage: zeroUsage(), rejected: "request failed" });
         break;
       }
       const record = (cp: string, validation: Attempt["validation"], rejected?: string) =>
-        attempts.push({ cp, validation, model: reply.model, usage: reply.usage, ...(rejected ? { rejected } : {}) });
-      messages.push({ role: "assistant", content: reply.content });
+        attempts.push({ cp, validation, provider: this.o.model.provider, model: reply.model, usage: reply.usage, ...(rejected ? { rejected } : {}) });
+      messages.push({ role: "assistant", text: reply.text, raw: reply.raw });
 
       if (reply.stopReason === "refusal") {
         record("", failed("refused"), "refusal");
@@ -267,7 +272,7 @@ class PatternTranslator {
       if (!parsed.ok) {
         const why = reply.stopReason === "max_tokens" ? "it was cut off at the token limit" : parsed.why;
         record("", failed(why), "unusable response");
-        messages.push({ role: "user", content: formatRepair(why) });
+        messages.push(userTurn(formatRepair(why)));
         continue;
       }
       const response = parsed.value;
@@ -299,7 +304,7 @@ class PatternTranslator {
       if (amendError) {
         const rowId = response.amendPrevious[0]?.rowId ?? "?";
         record(cp, failed(`amendment rejected: ${amendError}`), "amendment rejected");
-        messages.push({ role: "user", content: amendmentRepair(rowId, amendError, target) });
+        messages.push(userTurn(amendmentRepair(rowId, amendError, target)));
         continue;
       }
 
@@ -315,7 +320,7 @@ class PatternTranslator {
         record(cp, summary(result), "parse error");
         const c: Candidate = { response, amended, result, countOk: false, countError: Infinity };
         if (better(c, best)) best = c;
-        messages.push({ role: "user", content: parseErrorRepair(result.error!, target) });
+        messages.push(userTurn(parseErrorRepair(result.error!, target)));
         continue;
       }
 
@@ -340,7 +345,7 @@ class PatternTranslator {
       } else {
         record(cp, summary(result), `count ${check!.accepted.join(" or ")}, stated ${stated}`);
         if (better(c, best)) best = c;
-        messages.push({ role: "user", content: countRepair(stated!, check!, target) });
+        messages.push(userTurn(countRepair(stated!, check!, target)));
       }
     }
 
@@ -429,8 +434,8 @@ class PatternTranslator {
       if (given !== undefined) this.acceptGiven(row, given);
     }
     const givenRows = [...this.accepted];
-    const messages: Anthropic.MessageParam[] = [
-      { role: "user", content: [patternBlock(this.context), wholeBlock(todo, givenRows)] },
+    const messages: Turn[] = [
+      { role: "user", blocks: [patternBlock(this.context), wholeBlock(todo, givenRows)] },
     ];
     const maxAttempts = this.o.maxAttempts ?? DEFAULT_ATTEMPTS;
     const attempts: Attempt[] = [];
@@ -446,40 +451,42 @@ class PatternTranslator {
         reply = await this.send(`whole-${attempt}`, attempt ? this.o.repairEffort : this.o.effort, messages, true);
       } catch (error) {
         if (isFatal(error)) throw error;
-        attempts.push({ cp: "", validation: failed(`request failed: ${String(error)}`), model: this.o.modelName, usage: zeroUsage(), rejected: "request failed" });
+        attempts.push({ cp: "", validation: failed(`request failed: ${String(error)}`), provider: this.o.model.provider, model: this.o.modelName, usage: zeroUsage(), rejected: "request failed" });
         break;
       }
-      messages.push({ role: "assistant", content: reply.content });
+      messages.push({ role: "assistant", text: reply.text, raw: reply.raw });
       if (reply.stopReason === "refusal") {
-        attempts.push({ cp: "", validation: failed("refused"), model: reply.model, usage: reply.usage, rejected: "refusal" });
+        attempts.push({ cp: "", validation: failed("refused"), provider: this.o.model.provider, model: reply.model, usage: reply.usage, rejected: "refusal" });
         break;
       }
       const parsed = safeJson(reply.text, WholeResponse);
       if (!parsed.ok) {
         const why = reply.stopReason === "max_tokens" ? "it was cut off at the token limit" : parsed.why;
-        attempts.push({ cp: "", validation: failed(why), model: reply.model, usage: reply.usage, rejected: "unusable response" });
-        messages.push({ role: "user", content: formatRepair(why, true) });
+        attempts.push({ cp: "", validation: failed(why), provider: this.o.model.provider, model: reply.model, usage: reply.usage, rejected: "unusable response" });
+        messages.push(userTurn(formatRepair(why, true)));
         continue;
       }
       const cps = new Map(parsed.value.rows.map((r) => [r.rowId, r.cp.trim()]));
       const text = joinCp(this.input.rows.map((r) => this.input.given?.[r.id] ?? cps.get(r.id) ?? ""));
       const result = this.o.validate(text);
-      attempts.push({ cp: text, validation: summary(result), model: reply.model, usage: reply.usage, ...(result.ok ? {} : { rejected: "parse error" }) });
+      attempts.push({ cp: text, validation: summary(result), provider: this.o.model.provider, model: reply.model, usage: reply.usage, ...(result.ok ? {} : { rejected: "parse error" }) });
       if (!result.ok) {
         choose({ cps, ok: false, mismatches: Infinity, assumptions: parsed.value.assumptions });
-        messages.push({
-          role: "user",
-          content: `The parser rejected the pattern${result.error!.row === undefined ? "" : ` at parser row ${result.error!.row}`}:\n${result.error!.message}\n\nReturn the corrected response for every row.`,
-        });
+        messages.push(
+          userTurn(
+            `The parser rejected the pattern${result.error!.row === undefined ? "" : ` at parser row ${result.error!.row}`}:\n${result.error!.message}\n\nReturn the corrected response for every row.`,
+          ),
+        );
         continue;
       }
       const mismatches = this.wholeCountMismatches(cps);
       choose({ cps, ok: true, mismatches: mismatches.length, assumptions: parsed.value.assumptions });
       if (mismatches.length === 0 || attempt === maxAttempts - 1) break;
-      messages.push({
-        role: "user",
-        content: `The pattern parses, but these rows do not make their stated counts:\n${mismatches.join("\n")}\n\nReturn the corrected response for every row.`,
-      });
+      messages.push(
+        userTurn(
+          `The pattern parses, but these rows do not make their stated counts:\n${mismatches.join("\n")}\n\nReturn the corrected response for every row.`,
+        ),
+      );
     }
 
     // Per-row status: rows of a pattern that parses are valid or count_mismatch.
@@ -556,33 +563,20 @@ class PatternTranslator {
         answers: Object.fromEntries(this.context.answers.map((a) => [a.rowId, a.answer])),
         colors: this.context.colors,
         promptVersion: "",
+        provider: this.o.model.provider,
+        model: this.o.modelName,
       },
       usage: this.usage,
       requests: this.requests,
       models: [...this.models],
+      ...(this.requests && this.cost !== undefined ? { costUsd: this.cost } : {}),
     };
   }
 }
 
-/** Errored batch requests that are bugs or setup problems; the rest are transient. */
-const FATAL_BATCH_ERRORS = new Set([
-  "invalid_request_error",
-  "authentication_error",
-  "permission_error",
-  "not_found_error",
-  "billing_error",
-]);
-
-/**
- * Errors that are bugs or setup problems, not translation failures: bad
- * requests, authentication, unknown model. The SDK has already retried rate
- * limits, server errors and connection errors before anything reaches here.
- */
-export function isFatal(error: unknown): boolean {
-  if (error instanceof BatchRequestError) return FATAL_BATCH_ERRORS.has(error.errorType);
-  if (!(error instanceof Anthropic.AnthropicError)) return false;
-  if (!(error instanceof Anthropic.APIError)) return true;
-  return error.status !== undefined && error.status < 500 && error.status !== 429;
+/** A repair or follow-up message. */
+function userTurn(text: string): Turn {
+  return { role: "user", blocks: [{ text, cache: false }] };
 }
 
 function safeJson<T>(text: string, schema: { safeParse(v: unknown): { success: true; data: T } | { success: false; error: { message: string } } }):
@@ -603,7 +597,7 @@ export async function translatePattern(input: TranslateInput, options: Translate
   const t = new PatternTranslator(input, options);
   await t.translateRows();
   const result = t.result();
-  result.pattern.promptVersion = promptVersion(settingsOf(options, "row"));
+  result.pattern.promptVersion = promptVersion(settingsOf({ ...options, provider: options.model.provider }, "row"));
   return result;
 }
 
@@ -612,6 +606,6 @@ export async function translateWhole(input: TranslateInput, options: TranslateOp
   const t = new PatternTranslator(input, options);
   await t.translateWhole();
   const result = t.result();
-  result.pattern.promptVersion = promptVersion(settingsOf(options, "whole"));
+  result.pattern.promptVersion = promptVersion(settingsOf({ ...options, provider: options.model.provider }, "whole"));
   return result;
 }

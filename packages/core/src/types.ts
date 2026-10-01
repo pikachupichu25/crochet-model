@@ -55,6 +55,8 @@ export interface Attempt {
   cp: string;
   /** Without graphJson and simpleDot, which are large. */
   validation: Omit<ValidationResult, "graphJson" | "simpleDot">;
+  /** "anthropic", "openrouter", "gemini" or "openai". */
+  provider: string;
   model: string;
   usage: Usage;
   /** Why the loop did not accept it, when it did not. */
@@ -84,4 +86,7 @@ export interface TranslatedPattern {
   /** "A" → "navy". */
   colors: Record<string, string>;
   promptVersion: string;
+  /** What translated it, for the cache key and the export (SPEC §5.7). */
+  provider?: string;
+  model?: string;
 }

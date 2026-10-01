@@ -16,22 +16,25 @@ import { spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import type { RowTranslation, Usage } from "@crochet-model/core";
 import { createNodeValidator, VENDOR_DIR } from "@crochet-model/core/node";
-import Anthropic from "@anthropic-ai/sdk";
 import {
+  API_KEY_ENV,
   BatchModel,
-  ClaudeModel,
+  createModel,
   isFatal,
+  listModels,
+  ModelError,
   promptVersion,
   settingsOf,
   systemPrompt,
   translatePattern,
   translateWhole,
+  type ModelInfo,
   type TranslateOptions,
   type TranslatorModel,
 } from "@crochet-model/translator";
 import { loadDataset, type DatasetName, type EvalItem } from "./datasets.ts";
 import { estimateCost, goldAnswerer, itemInput, LoggingModel, type LlmConfig, type QuestionLog } from "./llm.ts";
-import { costOf, knownPrice } from "./pricing.ts";
+import { costOf, priceOf } from "./pricing.ts";
 import { translateWithRules, type RulesOutput } from "./rules.ts";
 import { checkGold, scoreItem, type GoldCheck, type ItemScore } from "./score.ts";
 import { DATA_DIR, RUNS_DIR } from "./sources.ts";
@@ -81,7 +84,7 @@ export interface ItemRecord {
 export const RULES_OUTPUTS = ["rules", "rules-compiled"];
 
 export function llmOutputName(c: LlmConfig): string {
-  return [c.model, c.effort, c.mode, ...(c.repair ? [] : ["no-repair"]), ...(c.batch ? ["batch"] : [])].join(" ");
+  return [c.provider, c.model, c.effort, c.mode, ...(c.repair ? [] : ["no-repair"]), ...(c.batch ? ["batch"] : [])].join(" ");
 }
 
 export async function runEvaluation(options: RunOptions): Promise<{ dir: string; summaries: Summary[] }> {
@@ -92,8 +95,12 @@ export async function runEvaluation(options: RunOptions): Promise<{ dir: string;
   const llm = options.translator === "llm" ? options.llm : undefined;
   if (options.translator === "llm" && !llm) throw new Error("an LLM run needs its settings");
 
+  // Check credentials and the model id first (a free call), so a setup
+  // problem fails before a run directory exists.
+  const info = llm ? await preflight(llm) : undefined;
+  const price = llm ? priceOf(llm.provider, llm.model, info?.price) : undefined;
   if (llm) {
-    const estimate = estimateCost(items, llm);
+    const estimate = estimateCost(items, llm, price);
     const dollars = estimate.dollars === undefined ? "unknown (no price for this model)" : `about US$${estimate.dollars.toFixed(2)}`;
     log(`estimate: ${dollars}, ${estimate.detail}`);
     const limit = options.maxCost ?? 5;
@@ -102,12 +109,9 @@ export async function runEvaluation(options: RunOptions): Promise<{ dir: string;
     }
   }
 
-  // Check credentials and the model id first (a free call), so a setup
-  // problem fails before a run directory exists.
-  const anthropic = llm ? new Anthropic({ maxRetries: 4 }) : undefined;
-  if (llm) await preflight(anthropic!, llm.model);
-  const batch = llm?.batch ? new BatchModel({ client: anthropic, log }) : undefined;
-  const direct = llm && !llm.batch ? new ClaudeModel({ client: anthropic }) : undefined;
+  if (llm?.batch && llm.provider !== "anthropic") throw new Error("--batch is only built for Anthropic");
+  const batch = llm?.batch ? new BatchModel({ log }) : undefined;
+  const direct = llm && !llm.batch ? createModel(llm.provider) : undefined;
 
   const started = new Date();
   const stamp = started.toISOString().replace(/[-:]/g, "").replace(/\..*/, "").replace("T", "-");
@@ -123,7 +127,7 @@ export async function runEvaluation(options: RunOptions): Promise<{ dir: string;
     limit: options.limit ?? null,
     ids: options.ids ?? null,
     items: items.length,
-    ...(llm ? { llm, promptVersion: promptVersion(settingsOf(settingsFor(llm), llm.mode)) } : {}),
+    ...(llm ? { llm, promptVersion: promptVersion(settingsOf({ ...settingsFor(llm), provider: llm.provider }, llm.mode)) } : {}),
     startedAt: started.toISOString(),
     datasetSource: sources[options.dataset.split("-")[0]!] ?? null,
     crochetparadeCommit: readFileSync(`${VENDOR_DIR}COMMIT`, "utf8").trim(),
@@ -152,7 +156,7 @@ export async function runEvaluation(options: RunOptions): Promise<{ dir: string;
     writeFileSync(`${dir}prompt.txt`, systemPrompt());
     batches = batch?.batches;
     const model = new LoggingModel(batch ?? direct!, `${dir}requests.jsonl`);
-    const tasks = items.map((item) => () => runLlm(item, llm, model, outputs[0]!).then(done));
+    const tasks = items.map((item) => () => runLlm(item, llm, model, outputs[0]!, price).then(done));
     if (batch) await batch.all(tasks);
     else await pool(tasks, llm.concurrency);
   }
@@ -189,20 +193,35 @@ function settingsFor(c: LlmConfig) {
   return { modelName: c.model, effort: c.effort, repairEffort: c.repairEffort, maxAttempts: c.repair ? 3 : 1 };
 }
 
-/** Clients read ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN or an `ant auth login` profile. */
-async function preflight(client: Anthropic, model: string) {
+/**
+ * Lists the provider's models with the key from the environment (free) and
+ * finds the chosen one. Anthropic also reads ANTHROPIC_AUTH_TOKEN or an
+ * `ant auth login` profile.
+ */
+async function preflight(c: LlmConfig): Promise<ModelInfo> {
+  let models: ModelInfo[];
   try {
-    await client.models.retrieve(model);
+    models = await listModels(c.provider);
   } catch (error) {
-    if (error instanceof Anthropic.NotFoundError) throw new Error(`unknown model: ${model}`);
-    if (error instanceof Anthropic.APIError && error.status !== undefined && error.status !== 401) throw error;
-    throw new Error(
-      `no usable Anthropic credentials (${error instanceof Error ? error.message.split("\n")[0] : String(error)}): set ANTHROPIC_API_KEY, or run \`ant auth login\``,
-    );
+    if (error instanceof ModelError && error.kind === "key_rejected") {
+      const login = c.provider === "anthropic" ? ", or run `ant auth login`" : "";
+      throw new Error(`no usable ${c.provider} credentials (${error.message.split("\n")[0]}): set ${API_KEY_ENV[c.provider]}${login}`);
+    }
+    throw error;
   }
+  const info = models.find((m) => m.id === c.model);
+  if (!info) throw new Error(`unknown model for ${c.provider}: ${c.model}`);
+  if (!info.structuredOutput) throw new Error(`${c.provider} ${c.model} cannot constrain output to a JSON Schema`);
+  return info;
 }
 
-async function runLlm(item: EvalItem, c: LlmConfig, model: TranslatorModel, output: string): Promise<ItemRecord> {
+async function runLlm(
+  item: EvalItem,
+  c: LlmConfig,
+  model: TranslatorModel,
+  output: string,
+  price: ModelInfo["price"],
+): Promise<ItemRecord> {
   const t0 = performance.now();
   const gold = checkGold(item);
   const base = { id: item.id, name: item.name, gold };
@@ -233,7 +252,7 @@ async function runLlm(item: EvalItem, c: LlmConfig, model: TranslatorModel, outp
       rows: { found: todo.length, kept: translations.filter((t) => t.status !== "invalid").length },
       llm: {
         usage: result.usage,
-        costUsd: knownPrice(c.model) ? costOf(c.model, result.usage, c.batch) : undefined,
+        costUsd: result.costUsd ?? costOf(price, result.usage, c.batch),
         requests: result.requests,
         models: result.models,
         questions,

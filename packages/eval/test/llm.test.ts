@@ -1,10 +1,18 @@
-import Anthropic from "@anthropic-ai/sdk";
 import { createNodeValidator } from "@crochet-model/core/node";
-import { isFatal, translatePattern, type ModelReply, type ModelRequest, type TranslatorModel } from "@crochet-model/translator";
+import {
+  anthropicError,
+  isFatal,
+  ModelError,
+  translatePattern,
+  type ModelReply,
+  type ModelRequest,
+  type TranslatorModel,
+} from "@crochet-model/translator";
+import Anthropic from "@anthropic-ai/sdk";
 import { describe, expect, it } from "vitest";
 import type { EvalItem } from "../src/datasets.ts";
 import { estimateCost, goldAnswerer, itemInput, type LlmConfig, type QuestionLog } from "../src/llm.ts";
-import { costOf } from "../src/pricing.ts";
+import { costOf, priceOf } from "../src/pricing.ts";
 import { scoreItem } from "../src/score.ts";
 
 const { validate } = createNodeValidator();
@@ -13,6 +21,7 @@ const item = (over: Partial<EvalItem>): EvalItem => ({ dataset: "stitchswitch", 
 
 /** Replies with the cp for each target row, looked up by the row's text. */
 class ByRow implements TranslatorModel {
+  readonly provider = "anthropic" as const;
   requests: ModelRequest[] = [];
   private answers: [string, object][];
   constructor(answers: [string, object][]) {
@@ -20,15 +29,16 @@ class ByRow implements TranslatorModel {
   }
   async send(request: ModelRequest): Promise<ModelReply> {
     this.requests.push(request);
-    const block = (request.messages[0]!.content as Anthropic.TextBlockParam[])[1]!.text;
+    const first = request.messages[0]!;
+    const block = first.role === "user" ? first.blocks[1]!.text : "";
     const target = block.slice(block.indexOf("Translate row"));
     const found = this.answers.find(([key]) => target.includes(key));
     const body = { cp: "", expectedCount: null, confidence: "high", assumptions: [], question: null, amendPrevious: [], ...found?.[1] };
     const text = JSON.stringify(body);
     return {
-      content: [{ type: "text", text }],
+      raw: [{ type: "text", text }],
       text,
-      stopReason: "end_turn",
+      stopReason: "end",
       usage: { inputTokens: 1000, outputTokens: 500, cacheReadTokens: 4000, cacheWriteTokens: 0 },
       model: "claude-opus-5-5",
     };
@@ -36,6 +46,7 @@ class ByRow implements TranslatorModel {
 }
 
 const config: LlmConfig = {
+  provider: "anthropic",
   model: "claude-opus-5-5",
   effort: "medium",
   repairEffort: "high",
@@ -105,28 +116,39 @@ describe("goldAnswerer", () => {
 describe("cost", () => {
   it("prices usage per model, and halves it for batches", () => {
     const usage = { inputTokens: 1e6, outputTokens: 1e6, cacheReadTokens: 1e6, cacheWriteTokens: 0 };
-    expect(costOf("claude-opus-5-5", usage, false)).toBeCloseTo(24.2);
-    expect(costOf("claude-opus-5-5", usage, true)).toBeCloseTo(12.1);
-    expect(costOf("unknown-model", usage, false)).toBeUndefined();
+    const opus = priceOf("anthropic", "claude-opus-5-5");
+    expect(costOf(opus, usage, false)).toBeCloseTo(24.2);
+    expect(costOf(opus, usage, true)).toBeCloseTo(12.1);
+    expect(priceOf("anthropic", "unknown-model")).toBeUndefined();
+    expect(costOf(undefined, usage, false)).toBeUndefined();
+  });
+
+  it("uses a listed price when none is on file, with cache reads at the input price by default", () => {
+    const listed = { input: 2, output: 10 };
+    expect(priceOf("openrouter", "a/b", listed)).toBe(listed);
+    const usage = { inputTokens: 1e6, outputTokens: 0, cacheReadTokens: 1e6, cacheWriteTokens: 0 };
+    expect(costOf(listed, usage, false)).toBeCloseTo(4);
   });
 
   it("estimates a run before it starts", () => {
     const items = [item({ english: "Row 1: Ch 7\nRow 2: 6 sc", gold: "7ch\n6sc" })];
-    const e = estimateCost(items, config);
+    const e = estimateCost(items, config, priceOf("anthropic", "claude-opus-5-5"));
     expect(e.requests).toBe(3);
     expect(e.dollars).toBeGreaterThan(0);
-    expect(estimateCost(items, { ...config, batch: true }).dollars).toBeCloseTo(e.dollars! / 2);
+    expect(estimateCost(items, { ...config, batch: true }, priceOf("anthropic", "claude-opus-5-5")).dollars).toBeCloseTo(e.dollars! / 2);
+    expect(estimateCost(items, { ...config, provider: "gemini", model: "gemini-3-pro-preview" }, undefined).dollars).toBeUndefined();
   });
 });
 
 describe("isFatal", () => {
   it("stops on bad requests and authentication, not on transient failures", () => {
-    const api = (status: number) => Anthropic.APIError.generate(status, { error: { message: "x" } }, "x", new Headers());
+    const api = (status: number) => anthropicError(Anthropic.APIError.generate(status, { error: { message: "x" } }, "x", new Headers()));
     expect(isFatal(api(400))).toBe(true);
     expect(isFatal(api(401))).toBe(true);
     expect(isFatal(api(429))).toBe(false);
     expect(isFatal(api(529))).toBe(false);
-    expect(isFatal(new Anthropic.APIConnectionError({ message: "down" }))).toBe(false);
+    expect(isFatal(anthropicError(new Anthropic.APIConnectionError({ message: "down" })))).toBe(false);
     expect(isFatal(new Error("batch request expired"))).toBe(false);
+    expect(isFatal(new ModelError("gemini", "no_credit", "quota"))).toBe(true);
   });
 });

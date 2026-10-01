@@ -4,7 +4,6 @@
 export { countMatches, lastRowCount, type CountCheck } from "./counts.ts";
 export {
   assemble,
-  isFatal,
   settingsOf,
   translatePattern,
   translateWhole,
@@ -14,14 +13,24 @@ export {
   type TranslateResult,
 } from "./loop.ts";
 export {
-  BatchModel,
-  ClaudeModel,
-  customId,
-  requestParams,
+  isFatal,
+  kindOfStatus,
+  ModelError,
+  PROVIDERS,
   type Effort,
+  type ErrorKind,
+  type ModelInfo,
   type ModelReply,
   type ModelRequest,
+  type ProviderId,
+  type StopReason,
+  type TextBlock,
   type TranslatorModel,
+  type Turn,
 } from "./model.ts";
+export { anthropicError, BatchModel, ClaudeModel, customId, requestParams } from "./providers/anthropic.ts";
+export { compatError, compatParams, CompatModel } from "./providers/openaiCompat.ts";
+export { GeminiModel, geminiError, geminiParams } from "./providers/gemini.ts";
+export { API_KEY_ENV, createModel, listModels, type ProviderOptions } from "./providers/index.ts";
 export { promptVersion, systemPrompt } from "./prompt.ts";
-export { RowResponse, WholeResponse } from "./schema.ts";
+export { portableSchema, RowResponse, WholeResponse } from "./schema.ts";
