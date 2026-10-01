@@ -504,7 +504,7 @@ The evaluation answers two questions: is the pipeline good enough to ship, and w
 | Dataset | What it holds | Gold CrochetPARADE? | Licence | Use |
 | --- | --- | --- | --- | --- |
 | [StitchSwitch](https://github.com/rachaelteresa/StitchSwitch) (Dias & Karim) | `StitchSwitchDataset.csv`: 109 rows of `Original Pattern`, `crochetPARADE Pattern`, `Name`, `Variation` | **Yes**, hand-made | **None stated** | Main structure-match benchmark |
-| [CrochetBench](https://github.com/Peiyu-Georgia-Li/crochetBench) Task D-step | `data/step_level_test_{1_2,3_4,5_6}.json`: 123 prompts (the README says 119), each giving the English and CrochetPARADE of the previous steps and the English of the next step | Only for the *previous* steps, not for the target | Data CC BY-NC 4.0 | Parse rate on long, real patterns |
+| [CrochetBench](https://github.com/Peiyu-Georgia-Li/crochetBench) ([paper](./crochetbench.pdf)) Task D-step | `data/step_level_test_{1_2,3_4,5_6}.json`: 123 prompts (the README says 119), each giving the English and CrochetPARADE of the previous steps and the English of the next step | Only for the *previous* steps, not for the target | Data CC BY-NC 4.0 | Parse rate on long, real patterns |
 | CrochetBench Task D-proj | `data/project_level_test.json`: 100 full patterns (Yarnspirations) with a photo link | No | Data CC BY-NC 4.0 | Parse rate and count match on whole patterns |
 | CrochetPARADE examples | about 60 patterns in `parse64.js` | Yes (they are the code), but no English | GPLv3 code; patterns stated public domain | Parser conformance (§10.2); prompt examples |
 | Our own set | Patterns we write, English + gold | Yes | Ours | Held-out test set and regression suite |
@@ -757,5 +757,5 @@ Evaluation comes before the translator on purpose: without the harness there is 
 - [REQUIREMENTS.md](./REQUIREMENTS.md), [RELATED_WORK.md](./RELATED_WORK.md), [CROCHET_CONVENTIONS.md](./CROCHET_CONVENTIONS.md), [MATH.md](./MATH.md).
 - CrochetPARADE: [repository](https://github.com/stassev/CrochetPARADE): `parse64.js` (`processText` returns `[dot, simpleDot]`), `translator_ui.js`, `deterministic_translator.js`, `graph.cpp`.
 - StitchSwitch dataset: [rachaelteresa/StitchSwitch](https://github.com/rachaelteresa/StitchSwitch) (last push 2025-04-15; no licence file).
-- CrochetBench: [Peiyu-Georgia-Li/crochetBench](https://github.com/Peiyu-Georgia-Li/crochetBench) (code MIT, data CC BY-NC 4.0; Task D data in `data/`; headless validator `benchmark_task/verify_crochet_pattern.js`).
+- CrochetBench: [Peiyu-Georgia-Li/crochetBench](https://github.com/Peiyu-Georgia-Li/crochetBench) (code MIT, data CC BY-NC 4.0; Task D data in `data/`; headless validator `benchmark_task/verify_crochet_pattern.js`). Paper: local copy [crochetbench.pdf](./crochetbench.pdf).
 - Dias and Karim (2025), local copy [05499-SuSS.DiasR.pdf](./05499-SuSS.DiasR.pdf).

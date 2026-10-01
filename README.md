@@ -66,7 +66,7 @@ npm run eval -- run --translator llm --dataset stitchswitch --provider claude-co
 npm run eval -- compare packages/eval/runs/<a> packages/eval/runs/<b>
 ```
 
-The datasets are for local evaluation only: StitchSwitch states no licence and CrochetBench data is CC BY-NC 4.0.
+The datasets are for local evaluation only: StitchSwitch states no licence and CrochetBench data is CC BY-NC 4.0 (paper: [docs/crochetbench.pdf](docs/crochetbench.pdf)).
 
 ## Licence
 

@@ -5,7 +5,8 @@ crochet patterns. Compiled 2026-09-28/29 from web searches.
 
 > **Verification note:** Section 1 comes from paper abstracts, READMEs, and
 > search-result summaries. In Section 2, the Dias & Karim paper (§2.1) was read
-> in full from the local PDF on 2026-09-29. CrochetBench (§2.2) is still from
+> in full from the local PDF on 2026-09-29. CrochetBench (§2.2, local copy
+> [crochetbench.pdf](./crochetbench.pdf)) is still from
 > its abstract and repository. Items marked *(unverified)* were not opened
 > directly.
 
@@ -162,7 +163,8 @@ dataset [rachaelteresa/StitchSwitch](https://github.com/rachaelteresa/StitchSwit
 ### 2.2 CrochetBench
 
 *CrochetBench: Can Vision-Language Models Move from Describing to Doing in
-Crochet Domain?* arXiv [2511.09483](https://arxiv.org/abs/2511.09483)
+Crochet Domain?* arXiv [2511.09483](https://arxiv.org/abs/2511.09483) ·
+local copy [crochetbench.pdf](./crochetbench.pdf) (v3, 2026-07-13)
 (Nov 2025, revised Jul 2026).
 Code: [Peiyu-Georgia-Li/crochetBench](https://github.com/Peiyu-Georgia-Li/crochetBench)
 
@@ -196,7 +198,7 @@ Code: [Peiyu-Georgia-Li/crochetBench](https://github.com/Peiyu-Georgia-Li/croche
     (`benchmark_task/verify_crochet_pattern.js`, using the older `parse57.js`).
   - Scripts exist for Claude, GPT-4o, Gemini, Qwen, Gemma and others, so a new
     model can be run on the same data.
-- **Still unknown (PDF not read):**
+- **Still unknown (local [PDF](./crochetbench.pdf) not yet read):**
   - per-model numbers
   - how the step-level prefix CrochetPARADE was produced
 
@@ -221,7 +223,7 @@ Code: [Peiyu-Georgia-Li/crochetBench](https://github.com/Peiyu-Georgia-Li/croche
 - [AmiGo (ACM)](https://dl.acm.org/doi/10.1145/3559400.3562005)
 - [Design tool for automated crocheting](https://www.researchgate.net/publication/373648708_Design_tool_for_automated_crocheting_of_fabrics)
 - [Dias & Karim, AAAI-SS 2025](https://ojs.aaai.org/index.php/AAAI-SS/article/view/36054)
-- [CrochetBench (arXiv)](https://arxiv.org/abs/2511.09483)
+- [CrochetBench (arXiv)](https://arxiv.org/abs/2511.09483); local copy [crochetbench.pdf](./crochetbench.pdf)
 - [CrochetPARADE](https://github.com/crochetparade/CrochetPARADE)
 - [GitHub crochet-pattern topic](https://github.com/topics/crochet-pattern)
 - [Craft Yarn Council: How to Read a Crochet Pattern](https://www.craftyarncouncil.com/standards/how-to-read-crochet-pattern)

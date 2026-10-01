@@ -149,7 +149,7 @@ This matters for the app in two ways:
   - Parsing is not enough. A single swapped stitch (sc for tr) still parses but turns a cone into a disc. This supports structure match as the headline metric (§9).
   - Structure match was checked **by hand**, by hovering over stitches in CrochetPARADE. This app has to automate that comparison (§9).
   - **The 109 patterns are the first candidate for this app's evaluation set** (§9).
-- Li, Huang and Chawla, [*CrochetBench*](https://arxiv.org/abs/2511.09483v1), 2025. Uses CrochetPARADE as an executable target. Model scores drop sharply when the measure changes from text similarity to "does it compile and produce the right structure". The authors blame weak long-range symbolic reasoning. The lesson for this app: measure by parsing and counting, not by string match, and put a validator in the loop.
+- Li, Huang and Chawla, [*CrochetBench*](https://arxiv.org/abs/2511.09483v1), 2025. Local copy: [crochetbench.pdf](./crochetbench.pdf); summary in [RELATED_WORK.md](./RELATED_WORK.md) §2.2. Uses CrochetPARADE as an executable target. Model scores drop sharply when the measure changes from text similarity to "does it compile and produce the right structure". The authors blame weak long-range symbolic reasoning. The lesson for this app: measure by parsing and counting, not by string match, and put a validator in the loop.
 - Greer and Mould, *Modeling crochet patterns with a force-directed graph layout* (Eurographics digital library, 2025). An independent force-directed approach to the same layout problem. Worth reading before changing the solver.
 
 ## 5. System overview
@@ -346,5 +346,5 @@ Translation quality is measured, not judged by eye.
 - CrochetPARADE: [site](https://www.crochetparade.org/), [repository](https://github.com/stassev/CrochetPARADE) (`README.md`, `Manual.md`, `capabilities.md`, `index.html`, `translator_ui.js`, `deterministic_translator.js`, `graph.cpp`).
 - Solver reading in the ply-split-braiding project: [ply-split-braiding `docs/elastic/README.md`](../../ply-split-braiding/docs/elastic/README.md) §2.
 - Dias, R. and Karim, K. (2025). [Translation of User Crochet Patterns to CrochetPARADE Syntax Using Large Language Models](https://ojs.aaai.org/index.php/AAAI-SS/article/view/36054). *Proceedings of the AAAI Symposium Series* 6(1), 200–208. Local copy: [05499-SuSS.DiasR.pdf](./05499-SuSS.DiasR.pdf).
-- Li, P., Huang, X. and Chawla, N. V. (2025). [CrochetBench: Can Vision-Language Models Move from Describing to Doing in Crochet Domain?](https://arxiv.org/abs/2511.09483v1)
+- Li, P., Huang, X. and Chawla, N. V. (2025). [CrochetBench: Can Vision-Language Models Move from Describing to Doing in Crochet Domain?](https://arxiv.org/abs/2511.09483v1). Local copy: [crochetbench.pdf](./crochetbench.pdf).
 - Greer, É. and Mould, D. (2025). *Modeling crochet patterns with a force-directed graph layout*. Eurographics digital library (linked from the CrochetPARADE README).
