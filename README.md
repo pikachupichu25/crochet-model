@@ -66,7 +66,19 @@ npm run eval -- run --translator llm --dataset stitchswitch --provider claude-co
 npm run eval -- compare packages/eval/runs/<a> packages/eval/runs/<b>
 ```
 
-The datasets are for local evaluation only: StitchSwitch states no licence and CrochetBench data is CC BY-NC 4.0 (paper: [docs/crochetbench.pdf](docs/crochetbench.pdf)).
+## Evaluation data
+
+`npm run eval -- fetch` downloads these into `packages/eval/data/` (git-ignored), pinned to the commits in [packages/eval/src/sources.ts](packages/eval/src/sources.ts). See [SPEC.md §7.1](docs/SPEC.md) for details.
+
+| `--dataset` | Source | Items | Gold CrochetPARADE? | Licence |
+| --- | --- | ---: | --- | --- |
+| `stitchswitch` | [StitchSwitch](https://github.com/rachaelteresa/StitchSwitch), from Dias & Karim, [*Translation of User Crochet Patterns to CrochetPARADE Syntax Using Large Language Models*](https://ojs.aaai.org/index.php/AAAI-SS/article/view/36054) (AAAI-SS 2025; local copy [docs/05499-SuSS.DiasR.pdf](docs/05499-SuSS.DiasR.pdf)) | 109 | Yes, translated by hand | None stated |
+| `crochetbench-step` | [CrochetBench](https://github.com/Peiyu-Georgia-Li/crochetBench) Task D-step, from Li et al., [*CrochetBench*](https://arxiv.org/abs/2511.09483) (local copy [docs/crochetbench.pdf](docs/crochetbench.pdf)) | 123 | Only for the earlier steps, not the target | CC BY-NC 4.0 |
+| `crochetbench-project` | CrochetBench Task D-proj (same paper) | 99 | No | CC BY-NC 4.0 |
+
+StitchSwitch is the only set with a gold answer for every pattern, so structure-match scores come from it alone. The CrochetBench sets are scored on parse rate and stated stitch counts. A held-out set of our own patterns is planned but not built yet.
+
+The datasets are for local evaluation only. Do not commit them, ship them in the app, or use them as prompt examples. StitchSwitch has no licence, so ask its authors before any public or commercial use.
 
 ## Licence
 
