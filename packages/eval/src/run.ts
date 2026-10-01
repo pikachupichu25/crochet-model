@@ -19,6 +19,7 @@ import { createNodeValidator, VENDOR_DIR } from "@crochet-model/core/node";
 import {
   API_KEY_ENV,
   BatchModel,
+  claudeCodeStatus,
   createModel,
   isFatal,
   listModels,
@@ -97,9 +98,12 @@ export async function runEvaluation(options: RunOptions): Promise<{ dir: string;
 
   // Check credentials and the model id first (a free call), so a setup
   // problem fails before a run directory exists.
-  const info = llm ? await preflight(llm) : undefined;
-  const price = llm ? priceOf(llm.provider, llm.model, info?.price) : undefined;
-  if (llm) {
+  const info = llm ? await preflight(llm, log) : undefined;
+  const price = llm && llm.provider !== "claude-code" ? priceOf(llm.provider, llm.model, info?.price) : undefined;
+  if (llm?.provider === "claude-code") {
+    // Counts against the Claude Code plan's usage limits, not billed per token.
+    log(`estimate: Claude Code plan usage, ${estimateCost(items, llm, undefined).detail}`);
+  } else if (llm) {
     const estimate = estimateCost(items, llm, price);
     const dollars = estimate.dollars === undefined ? "unknown (no price for this model)" : `about US$${estimate.dollars.toFixed(2)}`;
     log(`estimate: ${dollars}, ${estimate.detail}`);
@@ -196,9 +200,16 @@ function settingsFor(c: LlmConfig) {
 /**
  * Lists the provider's models with the key from the environment (free) and
  * finds the chosen one. Anthropic also reads ANTHROPIC_AUTH_TOKEN or an
- * `ant auth login` profile.
+ * `ant auth login` profile. Claude Code has no model list; it only needs a
+ * login, and an unknown model fails on the first request.
  */
-async function preflight(c: LlmConfig): Promise<ModelInfo> {
+async function preflight(c: LlmConfig, log: (line: string) => void): Promise<ModelInfo | undefined> {
+  if (c.provider === "claude-code") {
+    const status = await claudeCodeStatus();
+    if (!status.loggedIn) throw new Error("Claude Code is not logged in: run `claude auth login`");
+    log(`Claude Code login: ${status.authMethod ?? "unknown"}`);
+    return undefined;
+  }
   let models: ModelInfo[];
   try {
     models = await listModels(c.provider);

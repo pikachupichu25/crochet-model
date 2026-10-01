@@ -1,13 +1,14 @@
 // One adapter per provider, chosen by id (docs/SPEC.md §5.6). Base URLs are
 // fixed here; callers pass only a key (§8.3).
 
-import type { ModelInfo, ProviderId, TranslatorModel } from "../model.ts";
+import type { AppProviderId, ModelInfo, ProviderId, TranslatorModel } from "../model.ts";
 import { ClaudeModel, listAnthropicModels } from "./anthropic.ts";
+import { ClaudeCodeModel } from "./claudeCode.ts";
 import { GeminiModel, listGeminiModels } from "./gemini.ts";
 import { CompatModel, listCompatModels } from "./openaiCompat.ts";
 
 /** Where each provider's key is read from when none is passed (the evaluation). */
-export const API_KEY_ENV: Record<ProviderId, string> = {
+export const API_KEY_ENV: Record<AppProviderId, string> = {
   anthropic: "ANTHROPIC_API_KEY",
   openrouter: "OPENROUTER_API_KEY",
   gemini: "GEMINI_API_KEY",
@@ -29,11 +30,14 @@ export function createModel(provider: ProviderId, options: ProviderOptions = {})
     case "openai":
     case "openrouter":
       return new CompatModel(provider, options);
+    case "claude-code":
+      // Uses the Claude Code login; a key is not used.
+      return new ClaudeCodeModel();
   }
 }
 
 /** The models the key can use. Free to call; also checks the key. */
-export function listModels(provider: ProviderId, options: ProviderOptions = {}): Promise<ModelInfo[]> {
+export function listModels(provider: AppProviderId, options: ProviderOptions = {}): Promise<ModelInfo[]> {
   switch (provider) {
     case "anthropic":
       return listAnthropicModels(options);

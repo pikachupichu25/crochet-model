@@ -5,9 +5,15 @@
 
 import type { Usage } from "@crochet-model/core";
 
-export type ProviderId = "anthropic" | "openrouter" | "gemini" | "openai";
+/** Providers a user can pick in the app, with their own key (SPEC §8). */
+export type AppProviderId = "anthropic" | "openrouter" | "gemini" | "openai";
 
-export const PROVIDERS: ProviderId[] = ["anthropic", "openrouter", "gemini", "openai"];
+/** Plus "claude-code": the Claude Code CLI on the user's login, for evaluation only. */
+export type ProviderId = AppProviderId | "claude-code";
+
+export const PROVIDERS: AppProviderId[] = ["anthropic", "openrouter", "gemini", "openai"];
+
+export const EVAL_PROVIDERS: ProviderId[] = [...PROVIDERS, "claude-code"];
 
 export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
 

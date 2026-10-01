@@ -16,7 +16,9 @@ export {
   isFatal,
   kindOfStatus,
   ModelError,
+  EVAL_PROVIDERS,
   PROVIDERS,
+  type AppProviderId,
   type Effort,
   type ErrorKind,
   type ModelInfo,
@@ -32,5 +34,6 @@ export { anthropicError, BatchModel, ClaudeModel, customId, requestParams } from
 export { compatError, compatParams, CompatModel } from "./providers/openaiCompat.ts";
 export { GeminiModel, geminiError, geminiParams } from "./providers/gemini.ts";
 export { API_KEY_ENV, createModel, listModels, type ProviderOptions } from "./providers/index.ts";
+export { ClaudeCodeModel, claudeCodeStatus } from "./providers/claudeCode.ts";
 export { promptVersion, systemPrompt } from "./prompt.ts";
 export { portableSchema, RowResponse, WholeResponse } from "./schema.ts";
