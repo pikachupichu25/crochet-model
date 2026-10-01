@@ -1,7 +1,7 @@
 # Crochet Model App: Product Requirements
 
 > Status: draft, not started  
-> Last updated: 2026-09-29  
+> Last updated: 2026-10-01  
 > Purpose: turn a crochet pattern written in ordinary English into CrochetPARADE code with an LLM, then show it as a model that looks like real crocheted yarn, not a ball-and-stick graph.
 
 Related docs in this folder: [CROCHET_CONVENTIONS.md](./CROCHET_CONVENTIONS.md) (pattern abbreviations and US/UK terms, the input side of translation), [MATH.md](./MATH.md) (layout models beyond CrochetPARADE's spring graph) and [RELATED_WORK.md](./RELATED_WORK.md) (survey of parsers and LLM translation work). CrochetPARADE's layout solver was studied in the ply-split-braiding project ([`docs/elastic/README.md`](../../ply-split-braiding/docs/elastic/README.md) §2); that study is reused here rather than repeated.
@@ -51,6 +51,8 @@ The MVP must let a user:
 - Physical simulation of yarn: no stuffing, gravity or yarn-on-yarn contact.
 - Knitting, Tunisian crochet, or crochet techniques CrochetPARADE cannot express.
 - Writing new patterns from a description ("make me a bunny"). This is harder and less reliable; see §4.7.
+- Storing patterns in user accounts. Accounts hold only saved API keys and settings (§6.7); export is how a pattern is kept.
+- An LLM budget paid by the app. Every LLM call uses the user's own key.
 
 ## 4. Background: how CrochetPARADE works
 
@@ -206,8 +208,8 @@ This matters for the app in two ways:
 - **FR-2.4** **Validate every row** before accepting it. Run the CrochetPARADE parser (`processText`) on the prefix up to and including that row, and compare the parser's stitch count for the row with the stated count (FR-1.4), when one is stated.
 - **FR-2.5** **Repair loop.** On a parse error or count mismatch, send the parser's error message (or "expected 18, got 17") back to the LLM and ask for a fix. Stop after 3 attempts per row. Then mark the row as failed, keep the best attempt, and ask the user.
 - **FR-2.6** **Ask, do not invent.** When the English is ambiguous (for example "work evenly around", "dec 6 times evenly", or a missing count), the LLM returns a `question` with 2 to 4 concrete options. When an option can be written as code, it carries the code. The user's answer is added to the context for the rest of the pattern.
-- **FR-2.7** The provider and model are configurable. The default is a current Claude model, called through a small server proxy so the API key never reaches the browser. A later option is a self-hosted fine-tuned small model, following Dias and Karim (§4.7).
-- **FR-2.8** Cache translations by (pattern text hash, row, prompt version). Re-rendering or editing one row must not re-translate the whole pattern.
+- **FR-2.7** The user chooses the **provider and model** and supplies their own API key (§6.7). The MVP providers are Anthropic (Claude), OpenRouter, Google Gemini and OpenAI; OpenRouter covers other model makers with one key. Models the evaluation has scored are recommended first, with their score and cost; others can be chosen with a warning that they are not evaluated. The default is a current Claude model until the evaluation shows a better choice. The server makes the calls, so the browser never talks to a provider directly. A later option is a self-hosted fine-tuned small model, following Dias and Karim (§4.7).
+- **FR-2.8** Cache translations by (pattern text hash, row, prompt version, provider, model). Re-rendering or editing one row must not re-translate the whole pattern.
 - **FR-2.9** Run the rule-based CrochetPARADE translator (§4.6) as well, when it produces a valid candidate. If it agrees with the LLM, raise confidence. If it disagrees, show both.
 
 ### 6.3 Review and editing
@@ -251,6 +253,16 @@ This is the part CrochetPARADE does not provide. The layout gives positions for 
 - **FR-6.3** PNG snapshots of the current view.
 - **FR-6.4** An "Open in CrochetPARADE" action: copy the text and open crochetparade.org, for the tools this app does not replicate (charts, periphery, STL, remesher).
 
+### 6.7 API keys and accounts
+
+- **FR-7.1** **No account is needed for any step**, including LLM translation. A user without an account enters an API key for the chosen provider; the app keeps it only for that browser tab and never stores it on the server.
+- **FR-7.2** **Saving a key needs an account.** A signed-in user can save one key per provider and is not asked again. Saved keys are encrypted on the server, never shown again in full (only the last 4 characters) and never sent back to the browser.
+- **FR-7.3** A key is checked with its provider when entered or saved. A key the provider rejects, now or later, is reported to the user with a prompt to replace it.
+- **FR-7.4** A key is never saved without the user choosing to. Entering a key while signed out offers "sign in to save this key".
+- **FR-7.5** A signed-in user can list and delete saved keys, and delete their account, which deletes every saved key at once.
+- **FR-7.6** Keys never appear in logs, caches, error messages or exports.
+- **FR-7.7** Sign-in is by email and password, with email verification before the first key is saved and password reset by email. Settings (default provider, model, effort) are saved to the account when signed in, and kept in the browser otherwise.
+
 ## 7. Integration with CrochetPARADE
 
 ### 7.1 Options
@@ -274,8 +286,8 @@ This is the part CrochetPARADE does not provide. The layout gives positions for 
 
 - **NFR-1 Latency.** A 20-row amigurumi pattern: translation finishes within 30 s with no repairs, and the first 3D layout within 10 s on a 2022-era laptop. Translated rows appear as they finish; the user does not wait for the whole pattern.
 - **NFR-2 Scale.** Handles 3,000 stitches in yarn mode at 30 fps or better. Above that, falls back to structure mode (FR-5.6).
-- **NFR-3 Privacy.** Pattern text is sent to the LLM provider, and the app says so before the first translation. Layout and rendering stay local. No pattern is stored on a server without the user choosing to save it.
-- **NFR-4 Cost.** Log token use per translation. The target is under US$0.05 for a 20-row pattern; measure it in M1 and revise.
+- **NFR-3 Privacy.** Pattern text is sent to the LLM provider the user chose (through OpenRouter, also to the host of the chosen model), and the app names the provider before the first translation with it. Layout and rendering stay local. No pattern is stored on a server without the user choosing to save it; the translation cache can be turned off. API keys follow FR-7.x.
+- **NFR-4 Cost.** LLM cost falls on the user's own provider account, so the app shows an estimate before translating and the actual cost after. Log token use per translation. The target is under US$0.05 for a 20-row pattern with the default model; measure it in M1 and revise.
 - **NFR-5 Reproducibility.** Same CrochetPARADE text + same seed + same settings → same layout. LLM output is cached (FR-2.8), so a shared pattern re-renders without calling the LLM again.
 - **NFR-6 Platforms.** Current desktop Chrome, Safari and Firefox, with WebGL2. On tablets it must work, but may be slower.
 
@@ -299,7 +311,7 @@ Translation quality is measured, not judged by eye.
 | --- | --- | --- |
 | **M0 Spike** | Wrap `processText` and `graph64.wasm` in a Worker. Render CrochetPARADE's own showcase patterns as spheres and cylinders. | 5 showcase patterns render the same as on crochetparade.org. |
 | **M1 Translate** | FR-2.x with the validator and repair loop; evaluation harness (§9) and corpus. | Structure match beats the rule-based baseline on the corpus. |
-| **M2 Review UI** | FR-1.x, FR-3.x; English ↔ code ↔ model highlighting. | A new user translates and renders a sample pattern with no help. |
+| **M2 Review UI** | FR-1.x, FR-3.x, FR-7.x; English ↔ code ↔ model highlighting; key entry, accounts and saved keys. | A new user, without an account, enters their own key, translates and renders a sample pattern with no help. |
 | **M3 Yarn render** | FR-5.1 to FR-5.7 for the MVP stitch set; set the level-of-detail threshold. | Stitch-recognition test (§9) passes. |
 | **M4 Polish** | Exports, incremental layout, samples, performance targets. | NFR-1 and NFR-2 met. |
 
@@ -307,7 +319,7 @@ Translation quality is measured, not judged by eye.
 
 1. **Licence.** Is a GPLv3 app acceptable (option A), or must the app avoid GPL (option B, much more work)?
 2. **Delivery.** A web app only, or also a desktop or mobile app? This spec assumes a web app.
-3. **LLM hosting.** A hosted model through a proxy (needs a server and an API budget), or bring-your-own-key in the browser?
+3. ~~**LLM hosting.**~~ Settled (2026-10-01): bring your own key, for a choice of providers (FR-2.7). No account is needed; an account only saves keys (§6.7). The server calls the provider, so there is still a server, but no app-paid API budget.
 4. **Dataset.** StitchSwitch (Dias and Karim, 109 gold pairs) has no licence, and CrochetBench data (no gold translations for the target rows) is CC BY-NC 4.0. Both are usable for private evaluation (SPEC.md §7.1). Do we ask the StitchSwitch authors for a licence, and who writes our own gold set for public or commercial use?
 5. **"Make 2" and assembly.** Render duplicate parts as separate objects placed side by side, or leave assembly out of scope?
 6. **Realism bar.** Is "a crocheter can name the stitch" (§9) the right bar, or is the goal closer to product-photo quality? A higher bar means a path tracer or offline render, which is outside this spec.
@@ -325,6 +337,9 @@ Translation quality is measured, not judged by eye.
 - [ ] Unknown stitches render as simplified tubes and are listed as such.
 - [ ] Exported CrochetPARADE text renders the same shape on crochetparade.org.
 - [ ] The user is told that pattern text goes to the LLM provider before the first translation.
+- [ ] Without an account, a user can enter a key for each MVP provider, translate a sample pattern and render it.
+- [ ] A signed-in user can save a key, translate in a later visit without entering it again, and delete it; the key is never shown in full after saving.
+- [ ] A rejected or out-of-credit key gives a clear message naming the provider, not a translation failure.
 
 ## 13. Sources
 

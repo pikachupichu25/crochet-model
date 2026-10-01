@@ -1,8 +1,8 @@
 # Crochet Model App: Technical Specification
 
-> Status: M0 and M1 built; translation (M2) not started  
-> Last updated: 2026-09-30  
-> Purpose: define how to build what [REQUIREMENTS.md](./REQUIREMENTS.md) asks for: modules, data types, the translation loop, the evaluation harness and the yarn renderer.
+> Status: M0 and M1 built; M2 translator built for Claude, other providers and model sweep pending  
+> Last updated: 2026-10-01  
+> Purpose: define how to build what [REQUIREMENTS.md](./REQUIREMENTS.md) asks for: modules, data types, the translation loop, the evaluation harness, the server with user accounts and the yarn renderer.
 
 REQUIREMENTS.md says **what** the app must do and why. This document says **how**. Requirement IDs (FR-x.y, NFR-x) refer to REQUIREMENTS.md. Background on CrochetPARADE is in REQUIREMENTS.md §4, and on prior work in [RELATED_WORK.md](./RELATED_WORK.md).
 
@@ -14,7 +14,7 @@ This spec takes the defaults for the open decisions in REQUIREMENTS.md §11. Cha
 | --- | --- | --- |
 | 1. Licence | GPLv3; CrochetPARADE code is vendored (option A) | §3, §4 |
 | 2. Delivery | Web app | §2 |
-| 3. LLM hosting | Hosted Claude through the app's own server proxy | §5.6, §8 |
+| 3. LLM hosting | Bring your own key for any provider (Anthropic, OpenRouter, Google Gemini, OpenAI); the server calls the provider with it. No account is needed for any step: a guest's key lives only in the browser tab and is sent with each request. Signing in only adds saving keys, stored encrypted on the server | §5.6, §8 |
 | 4. Dataset | StitchSwitch and CrochetBench for **private evaluation only** (§7.1) | §7 |
 | 5. "Make 2" | Separate objects, placed side by side | §5.1 |
 | 6. Realism bar | "A crocheter can name the stitch" | §6 |
@@ -28,8 +28,10 @@ This spec takes the defaults for the open decisions in REQUIREMENTS.md §11. Cha
 | App | Vite + React | Small, fast; no server rendering needed |
 | 3D | three.js | CrochetPARADE uses it already; its GLTF exporter is reused |
 | Heavy work | Web Workers (parser, layout, mesh building) | NFR-1: the UI must not freeze |
-| Server | Node, one small HTTP service (Hono or Express) | Holds the API key; caches translations |
-| LLM | Claude via `@anthropic-ai/sdk` | FR-2.7 |
+| Server | Node, one small HTTP service (Hono) | Holds users' encrypted API keys; calls the providers; caches translations |
+| Accounts | Better Auth (email and password, cookie sessions) | Maintained library with SQLite storage and rate limits on sign-in; no hand-written password or session code |
+| Database | SQLite (`better-sqlite3`) | Users, encrypted keys, settings, translation cache; one file, no separate service |
+| LLM | One `TranslatorModel` interface, one adapter per provider: `@anthropic-ai/sdk` (Anthropic), `openai` (OpenAI, and OpenRouter through its OpenAI-compatible API), `@google/genai` (Gemini) | FR-2.7; the user chooses the provider and model (§5.6) |
 | Schemas | Zod | Shared by the server, the structured-output schema and the evaluation harness |
 | Tests | Vitest (units), Playwright (UI smoke tests) | — |
 
@@ -49,12 +51,24 @@ crochet-model/
       src/cp/graph.ts          DOT text → StitchGraph (§3.3)
       src/cp/compare.ts        structure match (§7.3)
       src/stitchTemplates/     yarn-path templates (§6.2)
-    translator/                LLM translation loop (§5); runs on the server
+    translator/                LLM translation loop (§5); Node, runs on the server and in the evaluation
+      src/prompt/system.md     role, inputs and output rules
       src/prompt/grammar.md    our own grammar reference (FR-2.2)
-      src/prompt/examples/     worked examples (§5.3)
-      src/claude.ts            API calls (§5.6)
+      src/prompt/idioms.md     English idiom table (FR-2.3)
+      src/prompt/examples.md   worked examples (§5.3)
+      src/prompt.ts            request blocks, repair messages, prompt version (§5.2, §5.7)
+      src/schema.ts            response schemas (§5.4)
+      src/model.ts             TranslatorModel interface, provider-neutral request and reply (§5.6)
+      src/providers/           one adapter per provider (§5.6)
+        anthropic.ts           Messages and Batches API
+        openaiCompat.ts        Chat Completions: OpenAI and OpenRouter
+        gemini.ts              Gemini API
+        capabilities.ts        what each model supports: structured output, effort, caching
+      src/counts.ts            stated-count check (§5.5)
       src/loop.ts              translate → validate → repair (§5.5)
-    server/                    HTTP proxy + translation cache (§8)
+    server/                    HTTP API, accounts, key store, translation cache (§8)
+      src/auth.ts              Better Auth setup (§8.2)
+      src/keys.ts              encrypt, decrypt, check and redact API keys (§8.3)
     app/                       React UI, workers, three.js renderer (§6, §9)
     eval/                      evaluation CLI and dataset loaders (§7)
       data/                    downloaded datasets; git-ignored (§7.1)
@@ -168,7 +182,7 @@ What M0 established:
 
 ## 4. Core types
 
-These are the contract between the modules. They live in `packages/core/src/types.ts`.
+These are the contract between the modules. They live in `packages/core/src/types.ts` (built in M2, with the additions noted after the block).
 
 ```ts
 /** One instruction line of the English pattern. */
@@ -202,7 +216,8 @@ interface Question {
 interface Attempt {
   cp: string;
   validation: ValidationResult;
-  model: string;                // e.g. "claude-opus-5-5"
+  provider: ProviderId;         // "anthropic" | "openrouter" | "gemini" | "openai"
+  model: string;                // the provider's id, e.g. "claude-opus-5-5", "anthropic/claude-opus-5-5"
   usage: { inputTokens: number; outputTokens: number; cacheReadTokens: number };
 }
 
@@ -214,8 +229,12 @@ interface TranslatedPattern {
   answers: Record<string, number>;           // question answers, by row id
   colors: Record<string, string>;            // "A" → "navy"
   promptVersion: string;                     // §5.7
+  provider: ProviderId;                      // what translated it, for the cache key and the export
+  model: string;
 }
 ```
+
+Built in M2 with these additions: `PatternRow.span` (rows a range label stands for), `SegmentedPattern` (rows, notes and the UK-terms flag), `Usage` with cache writes, `Attempt.rejected` (why the loop did not accept it), and `source: "gold"` for rows given to the translator already translated (the gold prefix of a CrochetBench step item).
 
 The CrochetPARADE text is assembled from `translations` in row order. `#` comments carry the English and the section headers (FR-6.1). User-edited rows (`source: "user"`) are never overwritten by re-translation (FR-3.3).
 
@@ -232,11 +251,13 @@ The CrochetPARADE text is assembled from `translations` in row order. `#` commen
 
 CrochetPARADE's `deterministic_translator.js` already does similar splitting (`segmentEnglishPattern`, `parseDeclaredCount`). Compare the two on the evaluation set; keep ours only if it is at least as good.
 
+**Status: built (M2).** Code: `packages/core/src/segment.ts` (`segmentPattern`, `statedCount`). Lines are classified one at a time: a label starts a row; a header (an all-caps line, or a short line ending in `:`) starts a section and carries `(make N)`; `Notes:` and bullet lines are notes; a blank line closes the open row or note. Any other line continues the open row or note, because real patterns (CrochetBench project texts) are hard-wrapped mid-sentence, except that a line starting `Rep`, `Fasten off`, `Join` or `With A` after a full stop starts a new unlabelled row. After a blank line or header, a line that reads like an instruction (`With A, ch 16.`) becomes an unlabelled row; prose becomes a note. Finishing lines with no label ("Fasten off.") are notes. Row ids are an FNV-1a hash of section, label, text and position, so they need no Node or browser crypto. On StitchSwitch it yields exactly one row per English line for all 109 patterns. The comparison with CrochetPARADE's segmenter is not done yet.
+
 ### 5.2 One request per row
 
-Each row is one Messages API request. The translator walks the rows in order, because each row's CrochetPARADE depends on the rows before it (labels, stitch counts, turning).
+Each row is one model request. The translator walks the rows in order, because each row's CrochetPARADE depends on the rows before it (labels, stitch counts, turning).
 
-Request layout, ordered so the stable parts are cached (§5.6):
+Request layout, ordered so the stable parts are cached (§5.6). Every provider caches a stable prefix, explicitly (Anthropic, and Anthropic or Gemini models through OpenRouter) or automatically (OpenAI, Gemini), so the same order serves all of them:
 
 | Block | Content | Changes | Cached |
 | --- | --- | --- | --- |
@@ -256,7 +277,7 @@ The model sees the whole pattern, so it can read ahead ("the ch-3 spaces made in
 
 ### 5.4 Output schema
 
-Structured outputs (`output_config.format` with a Zod schema, parsed by `client.messages.parse`) guarantee a parseable response:
+Structured outputs guarantee a parseable response. The Zod schema is converted once to JSON Schema and each adapter sends it in its provider's form (§5.6); the reply is parsed with the same Zod schema whatever the provider. Models that cannot constrain output to a schema are not offered:
 
 ```ts
 const RowResponse = z.object({
@@ -271,6 +292,8 @@ const RowResponse = z.object({
   amendPrevious: z.array(z.object({ rowId: z.string(), cp: z.string() })),
 });
 ```
+
+`confidence` is sent as a plain string and normalised in code (`confidenceOf`): the Anthropic SDK's schema conversion (`zodOutputFormat`, which drops keywords structured outputs do not support) turns the enum into a description, so it is not enforced. The other providers support different subsets of JSON Schema, so the schema keeps to the common part (objects, arrays, strings, integers, nullable) and enforces nothing else. The format is sent as plain JSON so the same request works in a batch.
 
 If `question` is set, `cp` is the model's best guess. It is validated and shown, but the row stays `needs_answer` until the user picks an option (FR-2.6).
 
@@ -288,22 +311,109 @@ for each row, in order:
 
 - **The repair message** quotes the parser error, names the row, and gives the advice for its `ParseErrorKind`. For example, `label_not_found`: "Label `A` is used here but not defined earlier. Define it where the English first makes the stitch or space, using `amendPrevious`." For a count mismatch: "Stated count 18, parsed count 17."
 - **Best attempt** ranking: parses with the right count > parses with the wrong count > does not parse; ties go to the smaller count error.
-- **The repair conversation is append-only.** Each repair adds the model's previous response and a new user message; earlier turns are never edited or removed. Current Claude models bind their thinking to the exact conversation, and editing history breaks that.
+- **The repair conversation is append-only.** Each repair adds the model's previous response and a new user message; earlier turns are never edited or removed. The previous response is replayed in the provider's own form (`ModelReply.raw`, §5.6): Claude models bind their thinking blocks to the exact conversation, and Gemini needs its thought signatures returned unchanged.
 - **After an invalid row,** the next rows are still translated, against the prefix without the failed row. Their counts will usually be off, so they are flagged, not repaired, until the user fixes the failed row.
-- **Rule-based candidate (FR-2.9).** When CrochetPARADE's own translator yields a valid candidate for the row, compare it with the LLM's. The same stitch graph raises confidence to `high`; a different graph shows both candidates to the user.
+**Status: built (M2).** Code: `packages/translator/src/loop.ts` (`translatePattern`, `translateWhole`), tested with a scripted model in `test/loop.test.ts`. Decisions made while building it:
 
-### 5.6 Claude API usage
+- **Stated counts allow for a beginning chain** (`counts.ts`). The parser counts every chain; patterns usually do not count a turning chain, and count a chain-3 as one stitch. A line that starts with L chains and makes T stitches in all matches T − L, or T − L + 1 when L ≥ 2. A single chain is never taken as a stitch: allowing it would hide an off-by-one in every "ch 1, …" row. The evaluation's step-level count metric uses the same rule.
+- **A deliberate count difference stops the repairs.** When the model's `expectedCount` equals the parser's count and not the stated one, it has said the English counts differently (for example skipped chains counted as a dc); the row is accepted as `count_mismatch` without more requests.
+- **A row that parses with the wrong count joins the prefix** as `count_mismatch`; only rows that do not parse are left out. Leaving out a row with one stitch too many would break every row after it.
+- **"Labels only" is checked by graph.** An amendment is accepted when the amended prefix parses and makes the same canonical stitch graph as before (`canonicalRows`, §7.3): labels are exactly what cannot change the graph. This answers open question 4.
+- **Questions.** The loop takes an `answer` callback. When it picks an option with CrochetPARADE, that option replaces the best guess if it parses; the answer is added to user block 1 for later rows. Without an answer the row is `needs_answer` and its best guess stays in the prefix.
+- **Errors.** A refusal or an unusable response is a failed attempt. Bad requests, authentication errors and unknown models (4xx other than 429) are thrown, not recorded as translation failures (`isFatal`). With several providers this becomes the error classes in §5.6.
+- **Whole mode** (`translateWhole`) asks for every row in one request (`WholeResponse`), validates the whole, and repairs it as a whole for parse errors and stated-count mismatches.
 
-- **Model:** `claude-opus-5-5` by default, configurable per deployment and per evaluation run. The evaluation (§7) decides whether a cheaper model (`claude-sonnet-5-5`, `claude-haiku-4-5`) is good enough; do not switch without that evidence.
-- **Thinking and effort:** adaptive thinking is always on for Opus 5.5 and cannot be disabled. Set `output_config.effort` explicitly: the Opus 5.5 default is `medium`. Start at `medium` for translation and `high` for repair attempts, then tune with the evaluation.
-- **Caching:** `cache_control: {type: "ephemeral"}` on system block 1 and user block 1 (§5.2). Log `usage.cache_read_input_tokens`; if it stays at zero across the rows of one pattern, something in the cached prefix is changing (a timestamp or unsorted JSON, for example).
+- **Rule-based candidate (FR-2.9).** Not built in M2: the rule-based translator splits patterns differently, so its candidates first need aligning to our rows. Deferred to M3. When CrochetPARADE's own translator yields a valid candidate for the row, compare it with the LLM's. The same stitch graph raises confidence to `high`; a different graph shows both candidates to the user.
+
+### 5.6 LLM providers
+
+The loop talks to one interface, `TranslatorModel.send(ModelRequest) → ModelReply`. One adapter per provider maps it to that provider's API. In the app the user picks the provider and model and pays with their own key (§8); in the evaluation they are `--provider` and `--model` (§7.2).
+
+**Status:** the Anthropic adapter is built (M2), as `ClaudeModel` and `BatchModel` in `packages/translator/src/model.ts`, with Anthropic types in `ModelRequest`. Planned: the provider-neutral request below, moving the Claude code to `providers/anthropic.ts`, and the OpenAI-compatible and Gemini adapters.
+
+#### Providers
+
+| | Anthropic | OpenRouter | Google Gemini | OpenAI |
+| --- | --- | --- | --- | --- |
+| API | Messages API | Chat Completions (OpenAI-compatible), `baseURL` `https://openrouter.ai/api/v1` | Gemini API (`generateContent`) | Chat Completions |
+| SDK | `@anthropic-ai/sdk` | `openai` | `@google/genai` | `openai` |
+| Structured output | `output_config.format` | `response_format: {type: "json_schema", strict: true}` | `responseMimeType: "application/json"` + `responseJsonSchema` | `response_format: {type: "json_schema", strict: true}` |
+| Effort | `output_config.effort`, adaptive thinking | `reasoning: {effort}` | `thinkingConfig` (level or budget, by model) | `reasoning_effort` |
+| Caching | `cache_control` on system 1 and user 1 | `cache_control` passed on for Anthropic and Gemini models; automatic for others | implicit, on a stable prefix | automatic, on a stable prefix |
+| Model list | Models API | `GET /models` (with `supported_parameters` and prices) | `models.list` | `GET /models` |
+| Batches (evaluation) | Message Batches API | none | later | later |
+| Cost | `pricing.ts` | reported in each response's `usage` | `pricing.ts` | `pricing.ts` |
+
+OpenRouter gives one key access to many hosts' models, so it is the route for providers without their own adapter. Base URLs are fixed in code; users cannot enter their own (§8.3).
+
+#### Provider-neutral request and reply
+
+```ts
+type ProviderId = "anthropic" | "openrouter" | "gemini" | "openai";
+
+interface ModelRequest {
+  id: string;                         // unique within a run; the batch custom_id
+  provider: ProviderId;
+  model: string;
+  effort: Effort;                     // "low" | "medium" | "high" | "xhigh" | "max"
+  system: TextBlock[];
+  messages: Turn[];
+  schema: Record<string, unknown>;    // JSON Schema from the Zod schema (§5.4)
+  maxTokens: number;
+}
+
+interface TextBlock { text: string; cache: boolean }   // cache: end of a cached prefix (§5.2)
+
+type Turn =
+  | { role: "user"; blocks: TextBlock[] }
+  | { role: "assistant"; text: string; raw: unknown };  // raw: the provider's own reply content
+
+interface ModelReply {
+  text: string;                       // the JSON answer
+  raw: unknown;                       // replayed unchanged in repair turns (§5.5)
+  stopReason: "end" | "max_tokens" | "refusal" | "other";
+  usage: Usage;                       // input, output, cache read, cache write tokens
+  costUsd?: number;                   // when the provider reports it (OpenRouter)
+  model: string;                      // the model that answered
+}
+```
+
+- **Effort** maps to the provider's nearest level, clamped to what the model accepts (`capabilities.ts`). Models without reasoning get none. This replaces today's Haiku special case.
+- **Capabilities** (structured output, effort levels, explicit caching, batches) come from rules on model ids for Anthropic, Gemini and OpenAI, and from `supported_parameters` in OpenRouter's model list. A model without schema-constrained output is not offered in the app and is refused by the evaluation.
+- **Usage** is normalised: OpenAI-compatible `prompt_tokens` and Gemini `promptTokenCount` include cached tokens, so the cached part moves to `cacheReadTokens`; Gemini's thinking tokens count as output.
+- **Stop reasons** are normalised: Anthropic `refusal`, OpenAI-compatible `content_filter` and Gemini `SAFETY`, `RECITATION` or `PROHIBITED_CONTENT` all become `refusal`, which is a failed attempt (§5.5).
+
+#### Errors
+
+Each adapter sorts errors into classes; the loop and the server act on the class, not on provider codes.
+
+| Class | Typical cause | Action |
+| --- | --- | --- |
+| `retryable` | 429 rate limit, 5xx, connection error | SDK retries with back-off; after that, the row fails and the user can retry |
+| `key_rejected` | 401, 403 | Stop the pattern; in the app, mark the user's key `invalid` (§8.3) and ask for a new one |
+| `no_credit` | OpenRouter 402, OpenAI `insufficient_quota`, Gemini quota exhausted | Stop the pattern; tell the user their provider account is out of credit |
+| `bad_model` | 404 or unknown model | Stop; ask the user to choose another model |
+| `bad_request` | other 400s | A bug in our request: log it (without the key), stop the pattern |
+
+Only `retryable` errors and refusals are recorded as translation attempts; the rest stop the pattern (`isFatal`).
+
+#### Models and defaults
+
+- **Recommended models.** `packages/translator/models.json` lists, per provider, the models the evaluation has scored, with their structure-match score and cost per 20-row pattern. The app shows these first, and every other model the user's key can list under "Not evaluated", with a warning. Adding a model needs no code change; adding a provider needs an adapter.
+- **Default:** `claude-opus-5-5` on Anthropic, until the sweep (§7) says otherwise. Each other provider's default is its best-scoring recommended model. Do not change a default without evaluation evidence.
+
+#### Anthropic adapter (built)
+
+- **Thinking and effort:** adaptive thinking is always on for Opus 5.5 and cannot be disabled. Set `output_config.effort` explicitly: the Opus 5.5 default is `medium`. Start at `medium` for translation and `high` for repair attempts, then tune with the evaluation. Haiku 4.5 gets neither `effort` nor adaptive thinking, which it rejects.
+- **Caching:** `cache_control: {type: "ephemeral"}` on system block 1 and user block 1 (§5.2). Log `usage.cache_read_input_tokens`; if it stays at zero across the rows of one pattern, something in the cached prefix is changing (a timestamp or unsorted JSON, for example). The same check applies to the cached-token counts of the other providers.
 - **Refusals:** check `stop_reason` before reading content. The live app sends `fallbacks: "default"` with the `server-side-fallback-2026-07-01` beta. Crochet text should rarely trigger a refusal; this is a guard, not a feature. The Batches API rejects `fallbacks`, so evaluation runs omit it and count refusals as failures.
-- **Errors:** retry 429, 5xx and connection errors with the SDK's built-in retries. Surface 400s as bugs, not as translation failures.
-- **Token logging:** every `Attempt` records usage. NFR-4 (cost per pattern) is measured from these logs.
+- **Batches:** `BatchModel` sends requests through the Message Batches API: since each pattern's loop waits on one request at a time, it collects requests until every running loop is waiting, then sends them as one batch (the first rows of every pattern, then the next round, and so on).
+
+**Token logging:** every `Attempt` records provider, model and usage, whatever the provider. NFR-4 (cost per pattern) is measured from these logs.
 
 ### 5.7 Prompt versions
 
-`promptVersion` is a hash of `grammar.md`, the examples, the system text, the schema and the model settings. It is part of the translation cache key (FR-2.8) and of every evaluation result. Changing the prompt invalidates the cache.
+`promptVersion` is a hash of `grammar.md`, the examples, the system text, the schema and the model settings. It is part of the translation cache key (FR-2.8) and of every evaluation result, together with the provider and model. Changing the prompt invalidates the cache. The prompt text is the same for every provider; if one provider needs different wording, that is a separate prompt version, chosen by the evaluation.
 
 ## 6. Yarn renderer
 
@@ -405,7 +515,7 @@ What M1 established (StitchSwitch commit `262ff43`, CrochetBench commit `4f834d5
 ### 7.2 Runs
 
 ```text
-eval run --dataset stitchswitch --model claude-opus-5-5 --effort medium \
+eval run --dataset stitchswitch --provider anthropic --model claude-opus-5-5 --effort medium \
          --mode row|whole [--no-repair] [--no-rules] [--limit N] [--batch]
 eval report runs/<run-id>
 eval compare runs/<a> runs/<b>
@@ -413,10 +523,18 @@ eval compare runs/<a> runs/<b>
 
 - **Modes:** `row` is the app's loop (§5.5). `whole` translates the whole pattern in one request, as the paper did, so our numbers can be compared with theirs.
 - **Ablations:** `--no-repair` (one attempt only) and `--no-rules` (no rule-based candidate) show what each part adds.
-- **Batch runs:** `--batch` sends first attempts through the Message Batches API at half price. Repairs depend on earlier results, so each repair round is a further batch; the run records how many rounds it took. Results come back in any order and are matched by `custom_id` (`<dataset>:<patternId>:<rowId>:<attempt>`).
+- **Batch runs (Anthropic only for now):** `--batch` sends first attempts through the Message Batches API at half price. Repairs depend on earlier results, so each repair round is a further batch; the run records how many rounds it took. Results come back in any order and are matched by `custom_id` (`<dataset>:<patternId>:<rowId>:<attempt>`).
 - **Reproducibility:** a run directory stores the config, the prompt version, the vendored CrochetPARADE commit, the dataset commit, every request and response, and the token usage. `eval report` works from the directory alone.
-- **Models:** any model in the Models API can be named with `--model`. Adding a new Claude model needs no code change. Other providers can be added later behind the same `translateRow` interface, but are out of scope here.
+- **Providers and models:** `--provider anthropic|openrouter|gemini|openai` (default `anthropic`) and `--model` with the provider's model id. Any model the provider lists can be named; adding a model needs no code change. Keys come from the environment (`ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`, `GEMINI_API_KEY`, `OPENAI_API_KEY`), never from the server's key store. The run directory records the provider. A model reached both directly and through OpenRouter is scored once on each route: hosts can differ.
 - **Cost guard:** a run first estimates its cost from token counts and asks for confirmation above a threshold (default US$5).
+
+**Status: built (M2), not yet run against the API.** `npm run eval -- run --translator llm --dataset <name> [--model ID] [--effort …] [--repair-effort …] [--mode row|whole] [--no-repair] [--batch] [--limit N] [--ids a,b] [--concurrency N] [--max-cost USD] [--yes]`, and `npm run eval -- compare <run-a> <run-b>`. Not built: `--no-rules` (no rule-based candidate yet, §5.5). Details:
+
+- **Preflight.** Before anything else the run asks the provider's model list for the chosen model (free), checks its capabilities (§5.6), so missing credentials or a wrong model id stop it before a run directory exists.
+- **Cost guard.** The estimate is rough (characters ÷ 3.5 for input, an assumed output per request by effort) and is printed every time; above `--max-cost` (default US$5), or for a model with no price on file (`pricing.ts`, keyed by provider and model; OpenRouter prices come from its model list), the run refuses unless `--yes` is given. Actual cost comes from the recorded usage.
+- **Inputs.** StitchSwitch rows keep their 1:1 alignment with the gold lines, which also lets questions be answered from the gold (§7.3, metric 4). A CrochetBench step item is its earlier steps given as gold rows plus the target; only the target's translation is scored. Project items are segmented with `segmentPattern`. Items whose gold does not parse are skipped, not sent.
+- **The run directory** also holds `prompt.txt` (the system prompt) and `requests.jsonl` (every request without the shared system prompt, and every reply's text, stop reason, usage and model). `items.jsonl` holds each row's translation with all its attempts.
+- **Concurrency.** Direct runs translate `--concurrency` patterns at a time (default 4); rows within a pattern are always sequential.
 
 ### 7.3 Metrics
 
@@ -433,8 +551,9 @@ Datasets with no gold (CrochetBench) report metrics 1, 2 and 5.
 
 How M1 computes them (`score.ts`, `compare.ts`):
 
+- **Rows kept** is the share of instruction rows the translator kept in its output: for the LLM, rows that are not `invalid`.
 - **Parses** needs at least one line the parser reads; an output of only `#` comments counts as empty, not as parsing. A step item is parsed as its gold prefix followed by the output.
-- **Count match** with gold: per gold CrochetPARADE row, the output's row with the same number has the same stitch count (`RowSummary.stitches`). With a stated count (step items): the last row after the output has that count. Averaged per item, then over items.
+- **Count match** with gold: per gold CrochetPARADE row, the output's row with the same number has the same stitch count (`RowSummary.stitches`). With a stated count (step items): the last row after the output has that count, allowing for a beginning chain as the translator does (§5.5). Averaged per item, then over items.
 - **Structure match** compares stitches by position, because statement uids differ between texts that make the same graph. `hidden` top nodes (`start_anew`) and rows left empty are dropped, the rest are renumbered (row, index), and each stitch becomes its type plus the sorted positions it is worked into. Exact match: every row equal. Partial score: stitches equal at the same position, over the larger of the two stitch counts, so a missing or extra stitch early in a row costs the rest of that row. `ring` then `6sc` is not `ring.R` then `6sc@R`: without `@R` CrochetPARADE works each sc into the one before.
 - **chrF** is sentence-level with sacrebleu's defaults (character 6-grams, beta 2, whitespace removed), on the output's code lines.
 
@@ -446,14 +565,14 @@ How M1 computes them (`score.ts`, `compare.ts`):
 - **Dias & Karim published numbers** (RELATED_WORK.md §2.1): 74% accuracy and 82.5% correctness for their best fine-tuned 8B model. Their accuracy was judged by hand over 8 folds, so the comparison is approximate.
 - **Our previous run**, via `eval compare`, to catch regressions when prompts change.
 
-**Rule-based baseline (M1, 2026-09-30).** CrochetPARADE `06e987b`, `parse64.js`. Rates are over items whose gold parses. Count match is n/a for project items (no gold, no row alignment); structure and chrF need gold, so only StitchSwitch has them. A full run of all three datasets takes about 3 minutes.
+**Rule-based baseline (M1, 2026-09-30).** CrochetPARADE `06e987b`, `parse64.js`. Rates are over items whose gold parses. Count match is n/a for project items (no gold, no row alignment); structure and chrF need gold, so only StitchSwitch has them. A full run of all three datasets takes about 3 minutes. The step-level count match was first published as 23.3% for both outputs, with stated counts compared strictly; since M2 it allows for a beginning chain (§7.3), and most step targets start with one.
 
 | Dataset | Output | Items | Gold fails | Parses | Count match (items) | Structure exact | Structure partial | chrF | Rows kept |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | StitchSwitch | rules | 109 | 0 | 45.9% | 26.5% (109) | 8.3% | 23.8% | 22.2 | 27.0% |
 | StitchSwitch | rules-compiled | 109 | 0 | 93.6% | 34.8% (109) | 6.4% | 27.9% | 36.3 | – |
-| CrochetBench step | rules | 123 | 2 | 36.4% | 23.3% (30) | – | – | – | 27.7% |
-| CrochetBench step | rules-compiled | 123 | 2 | 59.5% | 23.3% (30) | – | – | – | – |
+| CrochetBench step | rules | 123 | 2 | 36.4% | 63.3% (30) | – | – | – | 27.7% |
+| CrochetBench step | rules-compiled | 123 | 2 | 59.5% | 66.7% (30) | – | – | – | – |
 | CrochetBench project | rules | 99 | 0 | 67.7% | – | – | – | – | 23.8% |
 | CrochetBench project | rules-compiled | 99 | 0 | 90.9% | – | – | – | – | – |
 
@@ -463,20 +582,85 @@ How M1 computes them (`score.ts`, `compare.ts`):
 
 ## 8. Server
 
+The server runs the translator loop with the caller's key and caches results. Every step works without an account; an account only lets a user save keys (and settings) on the server instead of entering a key each visit. The server never sends a key back to the browser.
+
+**Where the key comes from,** per request:
+
+1. **Guest, or a signed-in user who has not saved a key for this provider:** the browser sends the key in the `X-Provider-Key` header. The server uses it for that request only and never stores it.
+2. **Signed-in user with a saved key for this provider:** the server decrypts the saved key (§8.3). A key in the header, if any, takes precedence for that request.
+
+Without either, `/api/translate*` and `/api/models` return 409 `{ error: "no_key", provider }` and the app asks for a key.
+
+### 8.1 Endpoints
+
 | Endpoint | Purpose |
 | --- | --- |
-| `POST /api/translate` | Body: `{ english, answers, colors, edits }`. Streams one `RowTranslation` per row as server-sent events, as rows finish (NFR-1). |
+| `/api/auth/*` | Sign up, sign in, sign out, email verification, password reset, session (Better Auth's routes, §8.2). |
+| `GET /api/keys` | The user's saved keys: provider, last 4 characters, status, added and last used dates. Never the key. |
+| `PUT /api/keys/:provider` | Body: `{ key }`. Checks the key with the provider (§8.3), then saves it encrypted, replacing any old one. |
+| `DELETE /api/keys/:provider` | Deletes the key. |
+| `GET /api/models/:provider` | Models the key can use, recommended ones first, with capabilities and price (§5.6). Doubles as the guest's key check. Cached for 1 hour per saved key; not cached for header keys. |
+| `GET` / `PUT /api/settings` | Signed in only. Default provider, model and effort; translation cache on or off. Guests keep the same settings in `localStorage`. |
+| `POST /api/translate` | Body: `{ english, answers, colors, edits, provider?, model? }`. Streams one `RowTranslation` per row as server-sent events, as rows finish (NFR-1). Provider and model come from the body, else the user's settings. |
 | `POST /api/translate/row` | Re-translates one row: after an answer, a rejected assumption, or a fix to an earlier row. |
-| `GET /api/health` | Model name, prompt version, vendored CrochetPARADE commit. |
+| `DELETE /api/account` | Deletes the user, their keys, settings and sessions at once. |
+| `GET /api/health` | Prompt version, vendored CrochetPARADE commit, enabled providers. |
 
-- The server runs the same `packages/translator` loop as the evaluation, including validation, in a Node `vm` context (§3.2). The browser re-validates for display, but the server's result is the one recorded.
-- **Cache:** key = hash(English, answers, colours, row id, prompt version, model). Stored in SQLite. A shared or reloaded pattern is served from the cache without calling the model (NFR-5).
-- **Privacy (NFR-3):** pattern text is sent to Anthropic for translation. It is not logged on our server except in the cache, and the cache can be turned off. The first translation asks the user to confirm.
-- **Limits:** per-IP rate limit and a per-pattern row cap (default 300 rows) to bound cost.
+Only `/api/keys`, `/api/settings` and `DELETE /api/account` need a signed-in session. `/api/translate*` and `/api/models` work for everyone, with the key sources above. A saved key with status `invalid` is not used.
+
+### 8.2 Accounts (FR-7.5, FR-7.7)
+
+- **Sign-in:** email and password through Better Auth, with email verification before the first key is saved and password reset by email. Passwords are hashed by the library (scrypt); we write no password or session code ourselves. Google and GitHub sign-in can be added later through the same library.
+- **Sessions:** an HTTP-only, `Secure`, `SameSite=Lax` cookie pointing to a server-side session row; 30 days, renewed on use. Every request that changes state must carry an `Origin` header matching the app's origin (CSRF guard).
+- **Abuse:** sign-up and sign-in are rate limited per IP and per email (library settings).
+- **Without an account,** a visitor can do everything: paste a pattern, translate it with their own key, answer questions, edit CrochetPARADE by hand, render and export. The samples' translations ship with the app, so they need no key at all. The account exists only to save keys and settings.
+- **Tables** (SQLite; Better Auth owns `user`, `session`, `account` and `verification`):
+
+```sql
+CREATE TABLE provider_key (
+  user_id      TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+  provider     TEXT NOT NULL,              -- anthropic | openrouter | gemini | openai
+  ciphertext   BLOB NOT NULL,              -- AES-256-GCM, tag appended
+  nonce        BLOB NOT NULL,              -- 12 random bytes, new on every save
+  key_version  INTEGER NOT NULL,           -- which master key encrypted it
+  last4        TEXT NOT NULL,
+  status       TEXT NOT NULL,              -- ok | invalid | unchecked
+  created_at   INTEGER NOT NULL,
+  last_used_at INTEGER,
+  PRIMARY KEY (user_id, provider)
+);
+
+CREATE TABLE user_settings (
+  user_id  TEXT PRIMARY KEY REFERENCES user(id) ON DELETE CASCADE,
+  provider TEXT, model TEXT, effort TEXT,
+  cache_enabled INTEGER NOT NULL DEFAULT 1
+);
+```
+
+### 8.3 API keys (FR-7.1 to FR-7.6)
+
+- **Guest keys** are kept in the tab's memory only, not in `localStorage` or `sessionStorage`, so a reload or a new tab asks again; this keeps a key off a shared computer's disk and out of reach of anything else that later runs on the page's origin. They travel over HTTPS in `X-Provider-Key` and are never written to the server's disk, the cache or the logs. The app offers "Sign in to save this key" next to the key field.
+- **Saved keys: one per user and provider.** The browser sends a key once, over HTTPS, when the user saves it. The server never returns it; the app shows the provider, the last 4 characters and the status. Signing in after entering a guest key offers to save it; it is never saved without the user choosing to.
+- **Checked on save:** the server lists the provider's models with the key (free). A key the provider rejects is not saved. A provider that cannot be reached saves the key as `unchecked`.
+- **Encrypted at rest:** AES-256-GCM with a fresh 12-byte nonce. The additional authenticated data is `user_id:provider`, so a ciphertext copied to another user's row does not decrypt. The master key comes from the `KEY_ENCRYPTION_KEY` environment variable (32 bytes, base64), never from the database or the repository. `key_version` allows rotation: a script re-encrypts every row under the new master key. A cloud KMS can replace the environment variable later without changing the table.
+- **In use:** a key is decrypted for one translation, held in memory only, and passed to the adapter. The same rules hold for a guest's header key. It is never logged (the logger redacts `x-provider-key`, `authorization`, `x-api-key` and `x-goog-api-key` headers and any field named `key`), never put in error messages sent to the browser, in the cache or in request logs. For a saved key, `last_used_at` is updated.
+- **Rejected in use:** a `key_rejected` error (§5.6) stops the translation and the app asks for a new key; for a saved key it also sets the status to `invalid`.
+- **No custom base URLs.** Each provider's address is fixed in code. Letting users enter one would let them point the server at internal hosts, and would send their key wherever they typed.
+
+### 8.4 Translation
+
+- The server runs the same `packages/translator` loop as the evaluation, including validation, in a Node `vm` context (§3.2), with the provider, model and key of the user who asked. The browser re-validates for display, but the server's result is the one recorded.
+- **Cache:** key = hash(English, answers, colours, row id, prompt version, provider, model). Stored in SQLite and shared between users: an entry only answers a request with the same English text, so it reveals nothing the requester did not send, and a hit costs nothing (NFR-5). A user who turns the cache off (an account setting, or a guest's local setting sent with the request) neither reads nor writes it.
+- **Cost:** spending is on the user's own provider account. Before a translation the app shows an estimate for the chosen model (§7.2's rough estimate); after it, the cost from the recorded usage (NFR-4). Patterns estimated above US$1 ask for confirmation.
+- **Privacy (NFR-3):** pattern text is sent to the provider the user chose; through OpenRouter, to OpenRouter and to the host of the chosen model. It is not stored on our server except in the cache, which the user can turn off. The first translation with each provider asks the user to confirm, naming the provider. A guest's key is forgotten when the tab closes. Saved keys are listed and can be deleted at any time; deleting the account deletes them at once.
+- **Limits:** validation uses server CPU, so translations are rate limited per user when signed in and per IP for guests, with at most 2 at a time for either; per-pattern row cap (default 300 rows) to bound the user's spend.
 
 ## 9. App
 
 - **Screens:** Input (paste, samples, UK/US check) → Review (three columns, questions, code editor; FR-3.x) → Model (2D/3D view, level of detail, tension, flip; FR-4.x, FR-5.x). The review and model views are side by side on wide screens.
+- **No sign-in wall.** Every screen works signed out; "Sign in" sits in the header and is only needed to save keys.
+- **Account screens:** Sign in / sign up; Settings with **API keys** (one card per provider: add or replace a key, last 4 characters, status, delete, a link to where the provider issues keys) and **Translation** (default provider, model and effort; recommended models first with their score and cost per 20-row pattern; cache on or off). Guests get the Translation settings too, stored in `localStorage`.
+- **Model picker:** in the Input screen next to Translate: provider, a key field (filled with "saved key ••••1a2b" when the signed-in user has one, otherwise empty with a link to where the provider issues keys), and model, listed once the key is entered. Translate is disabled until there is a key.
 - **State:** one `TranslatedPattern` in a store (Zustand or React context), saved to `localStorage` per pattern as a convenience; export is the durable format (FR-6.x).
 - **Code editor:** CodeMirror 6 with a small CrochetPARADE mode (stitch names, `@`, labels, `COLOR:`/`DEF:`/`DOT:` lines) and inline parser errors from the worker.
 - **Row ↔ stitch links:** `Stitch.row` maps to `PatternRow` through the order of the assembled text (§4). Hover and click on either side highlight the other (FR-3.2).
@@ -489,6 +673,9 @@ How M1 computes them (`score.ts`, `compare.ts`):
 - `validator.ts`: known-good and known-bad snippets, including one of each `ParseErrorKind`.
 - `compare.ts`: pairs that must match (same graph, different labels or brackets: `[2sc,>,dc]*3` vs `2sc,dc,2sc,dc,2sc`) and pairs that must not (sc swapped for tr, as in the paper's cone example).
 - `loop.ts`: the translator loop with a fake model that returns scripted responses, to test repair, `amendPrevious` rejection, and best-attempt ranking without API calls.
+- `providers/*`: each adapter against recorded provider responses (no network): request mapping (schema, effort, cache markers), usage and stop-reason normalisation, error classes, and replaying `raw` in repair turns.
+- `keys.ts`: encrypt → decrypt round trip; a ciphertext moved to another user or provider fails; the key never appears in logs or API responses (a test greps captured log output for a planted key).
+- Server: a guest translates with a header key and nothing about the key is written to the database, cache or logs; `/api/keys` and `/api/settings` reject requests without a session; a missing key gives 409; a cross-origin `Origin` is rejected; one user cannot read, replace or use another user's key.
 
 ### 10.2 Conformance
 
@@ -506,8 +693,8 @@ Refines REQUIREMENTS.md §10 with the spikes this spec depends on.
 | --- | --- | --- |
 | **M0 Spike** (done) | Vendor CrochetPARADE; validator wrapper in Node and a Worker; DOT → `StitchGraph`; call the solver from a Worker; render structure mode | Conformance suite passes (§10.2); 5 examples render as on crochetparade.org (§6.5) |
 | **M1 Evaluation first** (done) | Dataset loaders (§7.1); `compare.ts`; rule-based baseline scores | Baseline table for StitchSwitch and CrochetBench (§7.4) |
-| **M2 Translate** | Segmentation; prompt v1; row loop with repair; `eval run` with `--batch`; first model and effort sweep | Row mode beats the rule-based baseline on structure match |
-| **M3 App** | Server; review UI; code editor; row ↔ stitch links | A new user translates and renders a sample pattern unaided |
+| **M2 Translate** (built for Claude; providers and sweep pending) | Segmentation; prompt v1; row loop with repair; `eval run` with `--batch`; provider-neutral `TranslatorModel` with Anthropic, OpenAI-compatible (OpenAI, OpenRouter) and Gemini adapters (§5.6); first model and effort sweep across providers; `models.json` | Row mode beats the rule-based baseline on structure match with at least one model per provider |
+| **M3 App** | Server with guest keys, optional accounts and encrypted key store (§8); key settings and model picker; review UI; code editor; row ↔ stitch links | A new user, without an account, enters their own key, translates and renders a sample pattern unaided; signing in and saving the key also works |
 | **M4 Yarn** | Templates for the MVP stitch set; frames; tube meshes; levels of detail | Stitch-recognition test passes (REQUIREMENTS §9) |
 | **M5 Polish** | Exports, incremental layout, performance | NFR-1 and NFR-2 met |
 
@@ -518,8 +705,11 @@ Evaluation comes before the translator on purpose: without the harness there is 
 1. **StitchSwitch class codes.** What do `X` and `Y` in the `Variation` column mean, and does blank mean class B? Ask the authors; until then, report StitchSwitch results overall, not per class.
 2. **StitchSwitch licence.** Ask the authors whether evaluation results may be published and whether the data may be redistributed.
 3. ~~**Parser internals (M0).**~~ Settled: see §3.2 and §3.3.
-4. **`amendPrevious`.** Is "labels only" a strict enough rule to check automatically? The alternative is to require the model to rewrite the whole prefix, which is simpler to check but costs more tokens.
+4. ~~**`amendPrevious`.**~~ Settled: "labels only" is checked by comparing stitch graphs (§5.5).
 5. **Whole vs row mode.** If whole-pattern translation scores better on structure match, the app may use it for the first pass and row mode only for repairs. Decide from M2 results.
+6. **One prompt for every provider?** The prompt was written and tuned on Claude. If another provider's models score much worse, decide whether to tune a per-provider prompt version (§5.7) or only recommend the models that do well.
+7. **Hosting the key store.** Where the server runs, and whether `KEY_ENCRYPTION_KEY` moves to a cloud KMS before launch. Needed before M3 ships to real users.
+8. **A free tier.** Should new users without a key get a few translations on a key the app pays for? Not in this spec; it would need the per-IP and per-user budgets the original proxy design had.
 
 ## 13. References
 
