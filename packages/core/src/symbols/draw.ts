@@ -84,6 +84,7 @@ function legStroke(s: Stroke<LegPoint>, leg: Leg, frame: Frame, unit: number): V
  */
 function strokePoints<P>(s: Stroke<P>, point: (p: P) => Vec3, offset: (c: P, du: number, dv: number) => Vec3): Vec3[] {
   if (s.kind === "line") return [point(s.from), point(s.to)];
+  if (s.kind === "polyline") return s.points.map(point);
   const [start, end, rx, ry] = s.kind === "arc" ? [s.start, s.end, s.radius, s.radius] : [0, 2 * Math.PI, s.rx, s.ry];
   const n = Math.max(2, Math.ceil((TURN_SEGMENTS * Math.abs(end - start)) / (2 * Math.PI)));
   const out: Vec3[] = [];

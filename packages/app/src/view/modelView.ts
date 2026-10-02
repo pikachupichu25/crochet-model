@@ -114,6 +114,47 @@ export class ModelView {
     for (const { anchor, el } of this.labels) el.textContent = text(anchor.row);
   }
 
+  /** The current 2D symbol view as an SVG chart; undefined in structure mode or 3D (SYM-FR-6.1). */
+  exportSvg(title?: string): string | undefined {
+    if (!(this.layer instanceof SymbolLayer)) return undefined;
+    const style = getComputedStyle(this.container);
+    const css = (name: string, fallback: string) => style.getPropertyValue(name).trim() || fallback;
+    return this.layer.svg({
+      ink: css("--ink", "#2a2420"),
+      background: css("--card", "#fbf8f1"),
+      rowLabel: this.options.rowNumbers ? this.rowLabel : undefined,
+      title,
+    });
+  }
+
+  /** A PNG of the view as it is, row numbers included, on the viewport's background (FR-6.3, SYM-FR-6.2). */
+  snapshot(): Promise<Blob> {
+    const canvas = this.renderer.domElement;
+    // Read the canvas in the same task as a render, before the buffer is cleared.
+    this.renderer.render(this.scene, this.camera);
+    const out = document.createElement("canvas");
+    out.width = canvas.width;
+    out.height = canvas.height;
+    const ctx = out.getContext("2d")!;
+    const style = getComputedStyle(this.container);
+    ctx.fillStyle = style.getPropertyValue("--card").trim() || "#fbf8f1";
+    ctx.fillRect(0, 0, out.width, out.height);
+    ctx.drawImage(canvas, 0, 0);
+    const scale = out.width / Math.max(this.container.clientWidth, 1);
+    ctx.font = `600 ${11 * scale}px sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = style.getPropertyValue("--muted").trim() || "#6e655b";
+    this.placeLabels();
+    const p = new THREE.Vector3();
+    for (const { anchor, el } of this.labels) {
+      if (el.hidden) continue;
+      p.copy(anchor.at).project(this.camera);
+      ctx.fillText(el.textContent ?? "", ((p.x + 1) / 2) * out.width, ((1 - p.y) / 2) * out.height);
+    }
+    return new Promise((resolve, reject) => out.toBlob((b) => (b ? resolve(b) : reject(new Error("Could not make a PNG."))), "image/png"));
+  }
+
   /** Frames the selected stitches, or the whole model when none are shown. */
   focusSelection(): void {
     if (!this.layout) return;

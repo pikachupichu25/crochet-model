@@ -20,6 +20,7 @@ import {
   useApp,
 } from "../store.ts";
 import { CodeEditor } from "./CodeEditor.tsx";
+import { saveBlob } from "../download.ts";
 
 export function Review({ onEditPattern }: { onEditPattern: () => void }) {
   const rows = useApp((s) => s.segmented.rows);
@@ -296,12 +297,7 @@ function WholeCode({ text }: { text: string }) {
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   };
-  const download = () => {
-    const url = URL.createObjectURL(new Blob([text], { type: "text/plain" }));
-    const a = Object.assign(document.createElement("a"), { href: url, download: "pattern.crochetparade.txt" });
-    a.click();
-    URL.revokeObjectURL(url);
-  };
+  const download = () => saveBlob(new Blob([text], { type: "text/plain" }), "pattern.crochetparade.txt");
   return (
     <div className="whole-code">
       <div className="row-actions">

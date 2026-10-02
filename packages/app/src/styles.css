@@ -292,7 +292,9 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px s
 .viewport-message strong { font: 600 15px var(--serif); }
 .viewport-message.bad { border-color: var(--bad); color: var(--bad); }
 .tooltip { position: absolute; pointer-events: none; background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; font-size: 12px; white-space: nowrap; box-shadow: var(--shadow); }
-.model-foot { min-height: 18px; }
+.model-foot { min-height: 18px; display: flex; align-items: center; gap: 12px; }
+.model-foot .hint { flex: 1; min-width: 0; }
+.model-export { display: flex; gap: 6px; }
 .symbol-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; font-size: 12px; color: var(--muted); }
 .symbol-legend ul { display: contents; list-style: none; }
 .symbol-legend li { display: flex; align-items: center; gap: 6px; padding: 2px 6px 2px 2px; border-radius: 6px; cursor: default; }

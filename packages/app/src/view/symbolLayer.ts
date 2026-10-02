@@ -4,7 +4,7 @@
 // invisible quad per symbol is what the pointer hits. In 3D a shaded surface
 // hides the far side; with it off, symbols facing away fade instead.
 
-import { buildSymbolScene, legendEntries, type LegendEntry, type PlacedGlyph, type Stitch, type Surface, type SymbolScene } from "@crochet-model/core";
+import { buildSymbolScene, legendEntries, symbolSvg, type LegendEntry, type PlacedGlyph, type Stitch, type Surface, type SvgOptions, type SymbolScene } from "@crochet-model/core";
 import * as THREE from "three";
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
@@ -170,6 +170,12 @@ export class SymbolLayer implements Layer {
     const attribute = this.lineGeometry.getAttribute("instanceColorStart") as THREE.InterleavedBufferAttribute;
     attribute.data.needsUpdate = true;
     if (this.dotMesh.instanceColor) this.dotMesh.instanceColor.needsUpdate = true;
+  }
+
+  /** The 2D chart as SVG, in the colours on screen; undefined for 3D (SYM-FR-6.1, 6.3). */
+  svg(options: Omit<SvgOptions, "glyphColor">): string | undefined {
+    if (!this.scene || this.scene.dimension !== 2) return undefined;
+    return symbolSvg(this.scene, { ...options, glyphColor: (i) => `#${this.baseColors[i]!.getHexString()}` });
   }
 
   resize(width: number, height: number): void {

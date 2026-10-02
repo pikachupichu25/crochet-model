@@ -1,11 +1,11 @@
 // A model for CrochetPARADE text on its own, outside the app's pattern store:
 // parsed in the parser worker, laid out in the layout worker and drawn in
-// structure mode, with the app's model controls (ModelPanel.tsx). Each model
-// has its own layout worker, so two can lay out side by side.
+// structure or symbol mode, with the app's model controls (ModelPanel.tsx).
+// Each model has its own layout worker, so two can lay out side by side.
 
 import { applyObjectTransforms, readObjectTransforms, type Dimension, type Stitch } from "@crochet-model/core";
 import { useEffect, useRef, useState } from "react";
-import { ModelView, type ColorMode } from "../view/modelView.ts";
+import { ModelView, type ColorMode, type ViewMode } from "../view/modelView.ts";
 import { LayoutCancelled, LayoutClient, ParserClient } from "../workers/clients.ts";
 
 const QUALITY = { draft: 150, normal: 500, fine: 1500 } as const;
@@ -28,8 +28,21 @@ export function guessCpDimension(cp: string): Dimension {
 export const earlierCp = (context: { cp: string }[] | undefined) =>
   (context ?? []).map((c) => c.cp).filter((cp) => cp !== "").join("\n");
 
-/** `autoDimension` replaces the guess from `cp`, so models compared side by side match. */
-export function CpModel({ cp, autoDimension }: { cp: string; autoDimension?: Dimension }) {
+/**
+ * `autoDimension` replaces the guess from `cp`, so models compared side by
+ * side match. Pass `mode` and `onModeChange` to switch several models together.
+ */
+export function CpModel({
+  cp,
+  autoDimension,
+  mode: sharedMode,
+  onModeChange,
+}: {
+  cp: string;
+  autoDimension?: Dimension;
+  mode?: ViewMode;
+  onModeChange?: (mode: ViewMode) => void;
+}) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<ModelView | null>(null);
   const cancel = useRef<() => void>(undefined);
@@ -37,7 +50,8 @@ export function CpModel({ cp, autoDimension }: { cp: string; autoDimension?: Dim
   const [override, setOverride] = useState<Dimension>();
   const [quality, setQuality] = useState<Quality>("normal");
   const [seed, setSeed] = useState<number | undefined>();
-  const [colorMode, setColorMode] = useState<ColorMode>("type");
+  const [ownMode, setOwnMode] = useState<ViewMode>();
+  const [colors, setColors] = useState<Record<ViewMode, ColorMode>>({ structure: "type", symbols: "ink" });
   const [progress, setProgress] = useState<{ fraction: number; text: string }>();
   const [info, setInfo] = useState<string>();
   const [error, setError] = useState<string>();
@@ -45,12 +59,15 @@ export function CpModel({ cp, autoDimension }: { cp: string; autoDimension?: Dim
 
   const auto = autoDimension ?? guessCpDimension(cp);
   const dimension = override ?? auto;
+  // As in the app: symbols for 2D, structure for 3D, unless chosen.
+  const mode: ViewMode = sharedMode ?? ownMode ?? (dimension === 2 ? "symbols" : "structure");
+  const colorMode = colors[mode];
+  const chooseMode = onModeChange ?? setOwnMode;
 
   useEffect(() => {
     const v = new ModelView(host.current!);
     view.current = v;
     v.onHover = (h) => setHover(h ? { stitch: h.stitch, x: h.x, y: h.y } : undefined);
-    v.setOptions({ colorMode: "type" });
     const client = new LayoutClient();
     layoutClient.current = client;
     return () => {
@@ -59,7 +76,7 @@ export function CpModel({ cp, autoDimension }: { cp: string; autoDimension?: Dim
     };
   }, []);
 
-  useEffect(() => view.current?.setOptions({ colorMode }), [colorMode]);
+  useEffect(() => view.current?.setOptions({ mode, colorMode }), [mode, colorMode]);
 
   useEffect(() => {
     let stopped = false;
@@ -107,6 +124,10 @@ export function CpModel({ cp, autoDimension }: { cp: string; autoDimension?: Dim
   return (
     <div className="cp-model">
       <div className="model-controls">
+        <select aria-label="View" value={mode} onChange={(e) => chooseMode(e.target.value as ViewMode)}>
+          <option value="structure">Structure</option>
+          <option value="symbols">Symbols</option>
+        </select>
         <select aria-label="Dimension" value={override ?? "auto"} onChange={(e) => setOverride(e.target.value === "auto" ? undefined : (Number(e.target.value) as Dimension))}>
           <option value="auto">Auto ({auto}D)</option>
           <option value="3">3D</option>
@@ -117,7 +138,9 @@ export function CpModel({ cp, autoDimension }: { cp: string; autoDimension?: Dim
           <option value="normal">Normal</option>
           <option value="fine">Fine</option>
         </select>
-        <select aria-label="Colour" value={colorMode} onChange={(e) => setColorMode(e.target.value as ColorMode)}>
+        <select aria-label="Colour" value={colorMode} onChange={(e) => setColors({ ...colors, [mode]: e.target.value as ColorMode })}>
+          {mode === "symbols" && <option value="ink">Ink</option>}
+          {mode === "symbols" && <option value="rows">Alternate rows</option>}
           <option value="type">By stitch</option>
           <option value="yarn">Yarn colour</option>
         </select>

@@ -66,10 +66,14 @@ const BASE_NAMES: Record<BaseStitch, string> = {
 const BASE_ORDER: BaseStitch[] = ["ring", "ch", "ss", "sc", "hdc", "dc", "tr", "dtr", "trtr"];
 
 const COMPOSITE = /^(.+?)(\d+)(inc|tog)$/;
+const CLUSTER = /^(hdc|dc|tr)(\d)(puff|bobble|pc)$/;
+const CLUSTER_NAMES: Record<string, string> = { puff: "puff", bobble: "bobble", pc: "popcorn" };
 
 /** The US name of a legend key. Unknown types are named by their type. */
 export function stitchName(key: string): string {
   if (key === "picot3") return "picot of 3 chains";
+  const cluster = CLUSTER.exec(key);
+  if (cluster) return `${CLUSTER_NAMES[cluster[3]!]} of ${cluster[2]} ${BASE_NAMES[cluster[1] as BaseStitch]}`;
   const composite = COMPOSITE.exec(key);
   if (composite) {
     const base = stitchName(composite[1]!);
@@ -110,6 +114,8 @@ function rank(entry: LegendEntry): number {
   const parts = typeParts(composite ? composite[1]! : entry.key);
   const base = parts.base ? BASE_ORDER.indexOf(parts.base) : 50;
   const variant = composite ? 100 : parts.loop || parts.post || parts.reverse || parts.long ? 200 : 0;
+  const cluster = CLUSTER.exec(entry.key);
+  if (cluster) return 300 + BASE_ORDER.indexOf(cluster[1] as BaseStitch);
   return (entry.key === "picot3" ? 300 : variant) + base;
 }
 
@@ -129,7 +135,8 @@ export function legendIcon(key: string): LegendIcon {
   const type = composite ? composite[1]! : key;
   const n = composite ? Number(composite[2]) : 1;
   const parts = typeParts(type);
-  const height = ICON_HEIGHT[parts.base ?? "hdc"] ?? 1.4;
+  const cluster = CLUSTER.exec(type);
+  const height = ICON_HEIGHT[(cluster?.[1] as BaseStitch | undefined) ?? parts.base ?? "hdc"] ?? 1.4;
   const placements: StitchPlacement[] = [];
 
   const stitch = (t: string): Stitch => ({ id: "", row: 0, index: 0, statement: 0, type: t, workedInto: [], intoSpace: false, nodeIds: [], labels: [], side: typeParts(t).loop ?? typeParts(t).post });
@@ -150,8 +157,10 @@ export function legendIcon(key: string): LegendIcon {
   } else if (parts.base === "ss" || parts.base === "ring") {
     place(type, [0, 0.5, 0], []);
   } else if (composite?.[3] === "inc") {
+    // An sc's × sits mid-leg, so its fan needs more room than a post's.
+    const spacing = parts.base === "sc" ? 1.4 : 0.9;
     for (let i = 0; i < n; i++) {
-      const x = (i - (n - 1) / 2) * 0.9;
+      const x = (i - (n - 1) / 2) * spacing;
       place(type, [x, height, 0], [[0, 0, 0]]);
     }
   } else if (composite?.[3] === "tog") {

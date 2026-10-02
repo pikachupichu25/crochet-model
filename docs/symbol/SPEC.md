@@ -1,6 +1,6 @@
 # Symbol Mode: Technical Specification
 
-> Status: S1 (2D chart) and S2 (3D) built; S3 not started  
+> Status: S1 (2D chart), S2 (3D) and S3 (export and clusters) built; the crocheter checks in REQUIREMENTS §7 are pending  
 > Last updated: 2026-10-02  
 > Purpose: define how to build what [REQUIREMENTS.md](./REQUIREMENTS.md) asks for: the data that places each symbol, the symbol definitions, the three.js view, the legend and the SVG export.
 
@@ -44,7 +44,7 @@ packages/core/src/symbols/
   legend.ts        legend keys (sc2inc, dc2tog, picot3), US names, counts, icons (§6.3)
   stitchTypes.ts   typeParts() and baseType(): base stitch and loop, post, reverse, spike affixes
   vec.ts           tuple vector helpers
-  svg.ts           SymbolScene (2D) → SVG chart text (§7); S3
+  svg.ts           SymbolScene (2D) → SVG chart text (§7)
 packages/core/test/symbols.test.ts   legs, ring rule, glyphs, scene, legend (§9)
 packages/app/src/view/
   modelView.ts     ModelView: camera, controls, resize, render-on-demand, picking, highlights (§5.1)
@@ -185,9 +185,9 @@ Sizes are in units; `w` is the half-width of a symbol, 0.35 by default.
 | `*bl` / `*fl` | base stitch's strokes, plus one arc under the foot, r 0.25, opening down | | the same arc for back and front loop for now (§4.6) |
 | `fp*` / `bp*` | base stitch's strokes, plus one hook at the foot | | the same hook for front and back post for now (§4.6) |
 | `ring` | — | circle r 0.5 at the ring node | SYM-FR-3.5 |
-| `hdc3puff`–`hdc5puff` | S3 | | a closed oval of N posts |
-| `dc3bobble`–`dc5bobble`, `tr4bobble` | S3 | | N posts joined at foot and top, each with slashes |
-| `dc3pc`–`dc5pc` | S3 | | N posts fanned, closed by a cap arc |
+| `hdc3puff`–`hdc5puff` | N posts bowed out to ±0.3 and meeting at foot and top: a closed lens | — | |
+| `dc3bobble`–`dc5bobble`, `tr4bobble` | the puff's bowed posts, each with its base stitch's slashes at its middle | bar | told from a puff by the slashes and bar |
+| `dc3pc`–`dc5pc` | N straight posts fanned from the foot to ±0.3 at the top, with slashes | a flat oval cap (rx 0.42, ry 0.14) across the tops | |
 | unknown | post | open square, side 0.3, at the top | SYM-FR-2.6 |
 
 The type is matched after stripping the loop, post, reverse and spike affixes (`typeParts()` in core `stitchTypes.ts`), so `fptrbl` (if a pattern defines one) still gets a `tr` with a hook and an arc. The structure view's palette uses the same `baseType()`.
@@ -265,7 +265,7 @@ class ModelView {
 }
 ```
 
-`snapshot()` for PNG export (SYM-FR-6.2) comes in S3. The harness and the eval and datasets pages use `ModelView` in structure mode until S3 gives them the View select.
+`ModelView` also has `exportSvg(title)` (§7; undefined unless a 2D symbol view is shown) and `snapshot()` (SYM-FR-6.2): it renders, copies the canvas onto the viewport's `--card` background in the same task (no `preserveDrawingBuffer` needed), draws the visible row numbers on top, and returns a PNG blob.
 
 ### 5.2 Lines
 
@@ -324,17 +324,18 @@ Hover, base and selection colours are the existing `HOVER_COLOR`, `BASE_COLOR` a
 
 ### 6.4 Other pages
 
-The harness, `eval.html` and `datasets.html` use `StructureView` directly or through `CpModel.tsx`. In S3 they get the same View select; `CpModel` takes a `mode` prop so the two models on the eval page switch together.
+The harness, `eval.html` and `datasets.html` use `ModelView` directly or through `CpModel.tsx`, and all have the View select. `CpModel` follows the app's default (symbols for 2D, structure for 3D) and takes optional `mode` and `onModeChange` props; the eval page passes one shared mode, so the gold and output models switch together. The harness defaults to structure, and its colour list includes *Ink* and *Alternate rows*. It defines the app's `--ink`, `--ink-alt` and `--card` tokens from its own colours, so symbols are readable on its page.
 
 ## 7. SVG export
 
 `svg.ts` writes a 2D `SymbolScene` as a standalone SVG:
 
-- `viewBox` from the scene bounds plus a margin of 2 units, y flipped (layout y points up, SVG y down).
-- One `<g id="s-{stitchId}" class="sym sym-{type}">` per glyph, so a designer can select and move symbols in a vector editor (SYM-FR-6.1). Lines are `<path>`; chain ovals `<ellipse>`; dots `<circle>`. `stroke-width` is the view's line width in the same units; `stroke-linecap="round"`.
-- Colours are written resolved, from the current colour mode and theme.
-- A legend group laid out under the chart, using the same entries as §6.3, and row labels as `<text>` when shown.
-- The pattern's title (first `#` comment, if any) as the SVG `<title>`; the CrochetPARADE text is not embedded.
+- `viewBox` from the scene bounds plus a margin of 2 units, y flipped (layout y points up, SVG y down); the page is 24 px per yarn unit.
+- One `<g id="s-{stitchId}" class="sym sym-{key}" data-stitch="{stitchId}">` per glyph (ids made XML-safe), so a designer can select and move symbols in a vector editor (SYM-FR-6.1). Every stroke, chain ovals included, is a `<path>` (the scene keeps them as polylines); dots are `<circle>`. `stroke-width` is the view's line width in the same units; `stroke-linecap="round"`.
+- Colours are written resolved: each glyph's colour as on screen, the theme's `--ink` for text and legend, and `--card` as a background `<rect>`. So a chart exported in dark theme is light ink on a dark page.
+- A legend column under the chart, using the same entries and icons as §6.3 ("double crochet (dc) × 69"), and row labels as `<text>` when row numbers are shown.
+- The pattern's first `#` comment, or "Crochet chart", as the SVG `<title>`; the CrochetPARADE text is not embedded.
+- The app's **SVG chart** button (2D symbol view only) and **PNG** button sit in the model panel's footer and save `chart.svg` and `model.png`.
 
 A 3D scene is refused by `svg.ts` (SYM-FR-6.3); the app does not offer the button.
 
@@ -353,7 +354,7 @@ Unit tests in `packages/core/test/symbols.test.ts`, all in Node with the vendore
 - **3D:** on the ball, at least 97% of frames face away from the centre and of surface triangles face out; on a turned swatch laid out in 3D every stitch's `out` agrees with the stitches it is worked into; glyphs are lifted 0.15 units along `out`; 2D scenes have no surface.
 - **Overlays:** one row label per row; *Alternate rows* gives `row1`, `row0`, `row1`; the yarn path runs through every stitch of one piece and breaks at `start_anew`.
 - **Composite names:** the samples' legends list `sc2inc` and `sc2tog` with the counts the pattern states.
-- **SVG** (S3): the granny square sample's SVG parses as XML, has one `<g class="sym …">` per drawn stitch, and matches a stored snapshot.
+- **SVG:** the granny square's SVG has balanced tags, one `<g id="s-…">` per drawn stitch, one legend entry per legend key, an escaped title, row labels and no `NaN`; a 3D scene is refused. Structural checks were chosen over a stored snapshot, which would break on any glyph tweak.
 
 In the browser, during S1 and S2, by the preview workflow: switch modes on each sample, check the console is clean, hover and click a symbol and see the review row selected, and screenshot each sample in symbol mode for the chart match check (REQUIREMENTS §7).
 
@@ -365,7 +366,7 @@ As REQUIREMENTS §9, with the files each touches.
 | --- | --- | --- |
 | **S1 2D chart** (built) | `legs.ts`, `frames.ts` (2D), `glyphs.ts` (all but S3 types), `draw.ts`, `scene.ts`, `legend.ts`; `modelView.ts` with structure and symbol layers; View select, colour modes, legend | Unit tests (§9) pass; granny square and swatch match a published chart (crocheter check pending) |
 | **S2 3D** (built) | `frames.ts` (`orientFrames`), `surface.ts`, lift, far-side fading, *Alternate rows*, row labels, yarn path, Show menu | Ball sample: the round where increases stop is findable in symbol mode (checked by selecting Rnd 4 with *Alternate rows* on; crocheter check pending) |
-| **S3 Export and more** | `svg.ts`, PNG snapshot, puff, bobble and popcorn glyphs, harness and eval/datasets pages | Symbol recognition test passes; SVG opens in Inkscape with one group per symbol |
+| **S3 Export and more** (built) | `svg.ts`, PNG snapshot, puff, bobble and popcorn glyphs, harness and eval/datasets pages | Symbol recognition test passes (crocheter check pending); SVG opens in Inkscape with one group per symbol (checked in a browser; Inkscape not tried) |
 
 ## 11. Open questions
 

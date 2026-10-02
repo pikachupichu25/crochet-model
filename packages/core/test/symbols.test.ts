@@ -7,6 +7,7 @@ import { glyphFor } from "../src/symbols/glyphs.ts";
 import { legendEntries, legendIcon, stitchName } from "../src/symbols/legend.ts";
 import { placeStitches, UNDRAWN_TYPES } from "../src/symbols/legs.ts";
 import { buildSymbolScene } from "../src/symbols/scene.ts";
+import { symbolSvg } from "../src/symbols/svg.ts";
 import { cross, distance, dot, mean, sub } from "../src/symbols/vec.ts";
 
 const { validate } = createNodeValidator();
@@ -103,14 +104,19 @@ describe("the ring rule on the bundled examples", () => {
 });
 
 describe("glyphs", () => {
-  // Second phase (S3): until then they use the fallback mark.
-  const LATER = /puff|bobble|pc$/;
-
-  it("gives every built-in stitch a symbol, except the S3 ones", () => {
-    const missing = builtinStitches()
-      .filter((t) => !UNDRAWN_TYPES.has(t) && t !== "picot3")
-      .filter((t) => glyphFor(t).fallback && !LATER.test(t));
+  it("gives every built-in stitch a symbol", () => {
+    const missing = builtinStitches().filter((t) => !UNDRAWN_TYPES.has(t) && t !== "picot3" && glyphFor(t).fallback);
     expect(missing).toEqual([]);
+  });
+
+  it("tells puffs, bobbles and popcorns apart, and counts their posts", () => {
+    const strokes = (t: string) => JSON.stringify(glyphFor(t));
+    expect(new Set([strokes("hdc3puff"), strokes("dc3bobble"), strokes("dc3pc")]).size).toBe(3);
+    const posts = (t: string) => glyphFor(t).leg.filter((s) => s.kind === "polyline").length;
+    expect([posts("hdc3puff"), posts("hdc5puff"), posts("dc4bobble")]).toEqual([3, 5, 4]);
+    // A treble bobble has two slashes per post, a double one.
+    const slashCount = (t: string) => glyphFor(t).leg.filter((s) => s.kind === "line").length;
+    expect(slashCount("tr4bobble")).toBe(2 * slashCount("dc4bobble"));
   });
 
   it("draws back and front loop, and front and back post, alike for now (ISSUE-003)", () => {
@@ -174,11 +180,11 @@ describe("legend", () => {
     ]);
   });
 
-  it("finds picots, and lists unknown stitches last", () => {
-    const { graph, positions } = laidOut("8ch,turn\nsk,sc,picot3,sc,dc3bobble,sc");
+  it("finds picots and clusters, and lists unknown stitches last", () => {
+    const { graph, positions } = laidOut("DEF: zz=Copy(sc)\n8ch,turn\nsk,sc,picot3,sc,dc3bobble,zz");
     const entries = legendEntries(buildSymbolScene(graph, positions, 2, { colorMode: "ink" }));
-    expect(entries.map((e) => e.key)).toEqual(["ch", "sc", "picot3", "dc3bobble"]);
-    expect(entries.at(-1)!.fallback).toBe(true);
+    expect(entries.map((e) => e.key)).toEqual(["ch", "sc", "dc3bobble", "picot3", "zz"]);
+    expect(entries.map((e) => e.fallback)).toEqual([false, false, false, false, true]);
   });
 
   it("gives US names", () => {
@@ -186,11 +192,14 @@ describe("legend", () => {
     expect(stitchName("dc3inc")).toBe("3 double crochet in one stitch");
     expect(stitchName("fpdc")).toBe("front post double crochet");
     expect(stitchName("scbl")).toBe("single crochet, back loop only");
-    expect(stitchName("dc3bobble")).toBe("dc3bobble");
+    expect(stitchName("dc3bobble")).toBe("bobble of 3 double crochet");
+    expect(stitchName("hdc4puff")).toBe("puff of 4 half double crochet");
+    expect(stitchName("dc5pc")).toBe("popcorn of 5 double crochet");
+    expect(stitchName("zz")).toBe("zz");
   });
 
   it("draws an icon for every entry", () => {
-    for (const key of ["ch", "ss", "ring", "sc", "dc", "trtr", "sc2inc", "dc2tog", "picot3", "scbl", "fpdc", "dc3bobble"]) {
+    for (const key of ["ch", "ss", "ring", "sc", "dc", "trtr", "sc2inc", "dc2tog", "picot3", "scbl", "fpdc", "hdc3puff", "dc3bobble", "dc4pc", "zz"]) {
       const icon = legendIcon(key);
       expect(icon.lines.length + icon.dots.length).toBeGreaterThan(0);
       expect(icon.box[2]).toBeGreaterThan(icon.box[0]);
@@ -265,5 +274,42 @@ describe("overlays", () => {
     expect(buildSymbolScene(one.graph, one.positions, 2, { colorMode: "ink" }).yarnPath.map((r) => r.length)).toEqual([7]);
     const two = laidOut("4ch\nstart_anew\n3ch", 3);
     expect(buildSymbolScene(two.graph, two.positions, 3, { colorMode: "ink" }).yarnPath.map((r) => r.length)).toEqual([4, 3]);
+  });
+});
+
+describe("symbolSvg", () => {
+  const GRANNY = [
+    "4ch.R,ss@[%,0]",
+    "3ch,2dc@R,2ch.A[0],3dc@R,2ch.A[1],3dc@R,2ch.A[2],3dc@R,2ch.A[3],ss@[%,2]",
+  ].join("\n");
+
+  /** Every tag closed in order: well-formed enough for a browser or Inkscape. */
+  function balanced(svg: string): boolean {
+    const stack: string[] = [];
+    for (const m of svg.matchAll(/<(\/?)([a-zA-Z]+)[^>]*?(\/?)>/g)) {
+      if (m[3]) continue;
+      if (!m[1]) stack.push(m[2]!);
+      else if (stack.pop() !== m[2]) return false;
+    }
+    return stack.length === 0;
+  }
+
+  it("writes one group per stitch, a legend and row labels", () => {
+    const { graph, positions } = laidOut(GRANNY);
+    const scene = buildSymbolScene(graph, positions, 2, { colorMode: "ink" });
+    const svg = symbolSvg(scene, { glyphColor: () => "#222", ink: "#222", background: "#fff", rowLabel: (r) => `Rnd ${r}`, title: "Granny <square>" });
+    expect(balanced(svg)).toBe(true);
+    expect(svg.match(/<g id="s-/g)).toHaveLength(scene.glyphs.length);
+    expect(svg.match(/class="legend-entry"/g)).toHaveLength(legendEntries(scene).length);
+    expect(svg).toContain("<title>Granny &lt;square&gt;</title>");
+    expect(svg).toContain("double crochet (dc) × ");
+    expect(svg).toContain(">Rnd 1</text>");
+    expect(svg).not.toMatch(/NaN|Infinity/);
+  });
+
+  it("refuses a 3D scene", () => {
+    const { graph, positions } = laidOut("ring\n6sc", 3);
+    const scene = buildSymbolScene(graph, positions, 3, { colorMode: "ink" });
+    expect(() => symbolSvg(scene, { glyphColor: () => "#000", ink: "#000" })).toThrow(/2D/);
   });
 });

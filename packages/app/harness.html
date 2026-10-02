@@ -16,6 +16,10 @@
         --yarn: #3d64b3;
         --attach: #c0503c;
         --node: #1f1d1a;
+        /* Symbol mode reads the app's tokens. */
+        --ink: var(--fg);
+        --ink-alt: #2f63a8;
+        --card: var(--bg);
       }
       @media (prefers-color-scheme: dark) {
         :root {
@@ -28,6 +32,7 @@
           --yarn: #7fa2e6;
           --attach: #e58a76;
           --node: #ece8e1;
+          --ink-alt: #8fb6ee;
         }
       }
       * { box-sizing: border-box; }
@@ -82,10 +87,18 @@
           <span id="layoutInfo" class="muted"></span>
         </div>
         <div class="controls">
+          <label>view
+            <select id="viewMode">
+              <option value="structure">structure</option>
+              <option value="symbols">symbols</option>
+            </select>
+          </label>
           <label>colour
             <select id="colorMode">
               <option value="yarn">yarn</option>
               <option value="type">stitch type</option>
+              <option value="ink">ink (symbols)</option>
+              <option value="rows">alternate rows (symbols)</option>
             </select>
           </label>
           <label><input id="internal" type="checkbox" /> internal nodes</label>

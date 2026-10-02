@@ -69,3 +69,4 @@ export type { Surface } from "./symbols/surface.ts";
 export { legendEntries, legendIcon, stitchName, type LegendEntry, type LegendIcon } from "./symbols/legend.ts";
 export { baseType, typeParts, type BaseStitch, type TypeParts } from "./symbols/stitchTypes.ts";
 export type { Vec3 } from "./symbols/vec.ts";
+export { symbolSvg, type SvgOptions } from "./symbols/svg.ts";

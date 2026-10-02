@@ -7,6 +7,7 @@ import type { RunInfo, View, ViewItem } from "../../../eval/src/viewer.ts";
 import type { ItemScore } from "../../../eval/src/score.ts";
 import type { Summary } from "../../../eval/src/summary.ts";
 import { CpModel, earlierCp, guessCpDimension } from "../datasets/CpModel.tsx";
+import type { ViewMode } from "../view/modelView.ts";
 import { YarnMark } from "../ui/App.tsx";
 
 export type Status = "exact" | "partial" | "parses" | "no-parse" | "empty" | "incomplete" | "skipped";
@@ -331,6 +332,7 @@ function Scores({ view }: { view: View }) {
  * its earlier steps, as the scorer parses it, beside the earlier steps alone.
  */
 function Models({ item, output }: { item: ViewItem; output: string }) {
+  const [mode, setMode] = useState<ViewMode>();
   const gold = item.item?.gold;
   const earlier = earlierCp(item.item?.context);
   const code = codeLines(output).length ? output : "";
@@ -339,6 +341,7 @@ function Models({ item, output }: { item: ViewItem; output: string }) {
   if (!reference && !result) return null;
   const dimension = guessCpDimension(reference?.cp ?? result!.cp);
   const models = [reference, result].filter((m): m is { label: string; cp: string } => !!m);
+  // Gold and output switch view mode together.
   return (
     <section className="models">
       <h3 className="eyebrow">Models</h3>
@@ -346,7 +349,7 @@ function Models({ item, output }: { item: ViewItem; output: string }) {
         {models.map((m) => (
           <div key={m.label}>
             <h4 className="model-label">{m.label}</h4>
-            <CpModel cp={m.cp} autoDimension={dimension} />
+            <CpModel cp={m.cp} autoDimension={dimension} mode={mode} onModeChange={setMode} />
           </div>
         ))}
       </div>

@@ -4,7 +4,7 @@
 
 import { applyObjectTransforms, readObjectTransforms } from "@crochet-model/core";
 import type { Dimension, StitchGraph, ValidationResult } from "@crochet-model/core";
-import { ModelView, type ColorMode } from "./view/modelView.ts";
+import { ModelView, type ColorMode, type ViewMode } from "./view/modelView.ts";
 import { LayoutCancelled, LayoutClient, ParserClient } from "./workers/clients.ts";
 
 const EXAMPLES: Record<string, string> = {
@@ -32,6 +32,7 @@ const progressEl = $<HTMLProgressElement>("progress");
 const layoutInfo = $("layoutInfo");
 const seedInput = $<HTMLInputElement>("seed");
 const iterationsInput = $<HTMLInputElement>("iterations");
+const viewSelect = $<HTMLSelectElement>("viewMode");
 const colorSelect = $<HTMLSelectElement>("colorMode");
 const internalInput = $<HTMLInputElement>("internal");
 const fitButton = $<HTMLButtonElement>("fit");
@@ -57,6 +58,7 @@ view.onHover = (info) => {
   tooltip.style.left = `${info.x - box.left + 12}px`;
   tooltip.style.top = `${info.y - box.top + 12}px`;
 };
+viewSelect.addEventListener("change", () => view.setOptions({ mode: viewSelect.value as ViewMode }));
 colorSelect.addEventListener("change", () => view.setOptions({ colorMode: colorSelect.value as ColorMode }));
 internalInput.addEventListener("change", () => view.setOptions({ showInternal: internalInput.checked }));
 fitButton.addEventListener("click", () => view.fit());

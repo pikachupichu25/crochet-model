@@ -20,6 +20,7 @@ export type TopPoint = [u: number, v: number];
 
 export type Stroke<P> =
   | { kind: "line"; from: P; to: P }
+  | { kind: "polyline"; points: P[] }
   /** Radians, counter-clockwise from +u. */
   | { kind: "arc"; center: P; radius: number; start: number; end: number }
   | { kind: "ellipse"; center: P; rx: number; ry: number };
@@ -62,14 +63,46 @@ function cross(): Stroke<LegPoint>[] {
   ];
 }
 
-function slashes(n: number): Stroke<LegPoint>[] {
+/** Slashes across a post at v 0.5; `u` moves them onto a curved post. */
+function slashes(n: number, u = 0, width = 0.6 * HALF_WIDTH): Stroke<LegPoint>[] {
   const out: Stroke<LegPoint>[] = [];
   const spacing = 0.15;
   for (let i = 0; i < n; i++) {
     const dv = (i - (n - 1) / 2) * spacing;
-    out.push({ kind: "line", from: { u: -0.6 * HALF_WIDTH, v: 0.5, dv: dv - 0.1 }, to: { u: 0.6 * HALF_WIDTH, v: 0.5, dv: dv + 0.1 } });
+    out.push({ kind: "line", from: { u: u - width, v: 0.5, dv: dv - 0.1 }, to: { u: u + width, v: 0.5, dv: dv + 0.1 } });
   }
   return out;
+}
+
+/** A post from foot to top bowed out by `bulge` units at its middle. */
+function bowedPost(bulge: number): Stroke<LegPoint> {
+  const points: LegPoint[] = [];
+  for (let i = 0; i <= 8; i++) points.push({ u: bulge * Math.sin((Math.PI * i) / 8), v: i / 8 });
+  return { kind: "polyline", points };
+}
+
+/** `n` posts spread evenly across ±`spread` units. */
+const spreadOf = (n: number, spread: number) => Array.from({ length: n }, (_, i) => (n === 1 ? 0 : -spread + (2 * spread * i) / (n - 1)));
+
+/** Puffs, bobbles and popcorns: `hdc3puff`, `dc4bobble`, `dc5pc`, `tr4bobble`. */
+const CLUSTER = /^(hdc|dc|tr)(\d)(puff|bobble|pc)$/;
+
+function clusterGlyph(base: BaseStitch, n: number, kind: string): Glyph {
+  const g = empty();
+  const yarnOvers = SLASHES[base] ?? 0;
+  if (kind === "puff") {
+    // A closed oval of posts meeting at foot and top.
+    for (const b of spreadOf(n, 0.3)) g.leg.push(bowedPost(b));
+  } else if (kind === "bobble") {
+    // Bowed posts joined at foot and top, each with its slashes, under one bar.
+    for (const b of spreadOf(n, 0.3)) g.leg.push(bowedPost(b), ...slashes(yarnOvers, b, 0.12));
+    g.top.push(BAR);
+  } else {
+    // Popcorn: straight posts fanned from the foot, closed by a cap across their tops.
+    for (const x of spreadOf(n, 0.3)) g.leg.push({ kind: "line", from: { u: 0, v: 0 }, to: { u: x, v: 1 } }, ...slashes(yarnOvers, x / 2, 0.12));
+    g.top.push({ kind: "ellipse", center: [0, 0], rx: 0.42, ry: 0.14 });
+  }
+  return g;
 }
 
 /** One arc for back and front loop alike (ISSUE-003), hugging the foot. */
@@ -91,6 +124,8 @@ export function glyphFor(type: string, _side?: "back" | "front"): Glyph {
 }
 
 function buildGlyph(type: string): Glyph {
+  const cluster = CLUSTER.exec(type);
+  if (cluster) return clusterGlyph(cluster[1] as BaseStitch, Number(cluster[2]), cluster[3]!);
   const parts = typeParts(type);
   const g = empty();
   switch (parts.base) {

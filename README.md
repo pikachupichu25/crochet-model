@@ -2,7 +2,7 @@
 
 Turn a crochet pattern written in ordinary English into [CrochetPARADE](https://www.crochetparade.org/) code with an LLM, check it with the CrochetPARADE parser, and show it as a 3D model that looks like real yarn.
 
-Status: early. The pattern validator, the layout solver (in Web Workers), a ball-and-stick structure view, the evaluation harness (with scores for CrochetPARADE's rule-based translator), the LLM translation loop, and the app with its server (guest keys, optional accounts with saved keys, review UI, row ↔ stitch links) are built. The translator has not yet been scored against the API. The yarn renderer is not built yet.
+Status: early. The pattern validator, the layout solver (in Web Workers), a ball-and-stick structure view, a chart-symbol view (2D and 3D, with SVG and PNG export), the evaluation harness (with scores for CrochetPARADE's rule-based translator), the LLM translation loop, and the app with its server (guest keys, optional accounts with saved keys, review UI, row ↔ stitch links) are built. The translator has not yet been scored against the API. The yarn renderer is not built yet.
 
 ## Layout
 

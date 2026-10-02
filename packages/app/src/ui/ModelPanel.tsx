@@ -9,6 +9,7 @@ import { guessDimension, parserRowLabel, rowLabel, summarise } from "../pattern.
 import { selectRow, useApp } from "../store.ts";
 import { ModelView, type ColorMode, type ViewMode } from "../view/modelView.ts";
 import { LayoutCancelled } from "../workers/clients.ts";
+import { saveBlob } from "../download.ts";
 import { SymbolLegend } from "./SymbolLegend.tsx";
 
 const QUALITY = { draft: 150, normal: 500, fine: 1500 } as const;
@@ -17,6 +18,12 @@ type Quality = keyof typeof QUALITY;
 interface Progress {
   fraction: number;
   text: string;
+}
+
+/** The pattern's first `#` comment, if any, as the chart's title. */
+function chartTitle(text: string | undefined): string {
+  const comment = text?.split("\n").find((l) => l.trim().startsWith("#"));
+  return comment ? comment.replace(/^\s*#\s*/, "") : "Crochet chart";
 }
 
 // The view mode the user picked, per dimension (SYM-FR-1.3); unset means the
@@ -237,9 +244,30 @@ export function ModelPanel() {
       {mode === "symbols" && legend && legend.length > 0 && (
         <SymbolLegend entries={legend} onHighlight={(key) => view.current?.setHighlightKey(key)} />
       )}
-      <p className="model-foot hint">
-        {info ?? (checking ? "Checking…" : "")} {owners ? "· Click a stitch to find its row." : ""}
-      </p>
+      <div className="model-foot">
+        <p className="hint">
+          {info ?? (checking ? "Checking…" : "")} {owners ? "· Click a stitch to find its row." : ""}
+        </p>
+        {laidOut && !stale && (
+          <div className="model-export">
+            <button className="button small" onClick={() => void view.current?.snapshot().then((b) => saveBlob(b, "model.png"))}>
+              PNG
+            </button>
+            {mode === "symbols" && dimension === 2 && (
+              <button
+                className="button small"
+                title="The chart as SVG, one group per stitch, with its legend"
+                onClick={() => {
+                  const svg = view.current?.exportSvg(chartTitle(check?.text));
+                  if (svg) saveBlob(new Blob([svg], { type: "image/svg+xml" }), "chart.svg");
+                }}
+              >
+                SVG chart
+              </button>
+            )}
+          </div>
+        )}
+      </div>
     </section>
   );
 }
