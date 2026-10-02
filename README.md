@@ -23,6 +23,7 @@ vendor/crochetparade/   pinned copy of the CrochetPARADE parser and solver (GPLv
 - [CROCHET_CONVENTIONS.md](docs/CROCHET_CONVENTIONS.md): pattern abbreviations and US/UK terms
 - [MATH.md](docs/MATH.md): layout models beyond CrochetPARADE's spring graph
 - [RELATED_WORK.md](docs/RELATED_WORK.md): survey of parsers and LLM translation work
+- [symbol/](docs/symbol/REQUIREMENTS.md): symbol mode, a model view drawn with crochet chart symbols ([requirements](docs/symbol/REQUIREMENTS.md), [spec](docs/symbol/SPEC.md))
 
 ## Getting started
 
