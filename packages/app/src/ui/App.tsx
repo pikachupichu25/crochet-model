@@ -107,7 +107,7 @@ export function App() {
 }
 
 /** A ball of yarn: three crossing strands. */
-function YarnMark() {
+export function YarnMark() {
   return (
     <svg className="yarn-mark" viewBox="0 0 32 32" aria-hidden="true">
       <circle cx="16" cy="16" r="13" />

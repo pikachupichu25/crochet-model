@@ -66,6 +66,8 @@ npm run eval -- run --translator llm --dataset stitchswitch --provider claude-co
 npm run eval -- compare packages/eval/runs/<a> packages/eval/runs/<b>
 ```
 
+To read runs in the browser, open <http://localhost:5180/eval.html> while `npm run dev` is running. It shows each run's scores and every item's English, gold and translation side by side, with each row's attempts and the parser's verdict. Tick several runs of one dataset to combine them, for a baseline spread over several days of a rate-limited free model. The page is dev only: it reads `packages/eval/runs/` through the dev server and is left out of `vite build`.
+
 ## Evaluation data
 
 `npm run eval -- fetch` downloads these into `packages/eval/data/` (git-ignored), pinned to the commits in [packages/eval/src/sources.ts](packages/eval/src/sources.ts). See [SPEC.md §7.1](docs/SPEC.md) for details.

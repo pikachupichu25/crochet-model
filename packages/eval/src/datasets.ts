@@ -27,6 +27,12 @@ export interface EvalItem {
   statedCount?: number;
   /** StitchSwitch `Variation` column, as written (meaning unconfirmed; SPEC §12). */
   variation?: string;
+  /**
+   * CrochetBench `image_link`: a photo of the finished project on the
+   * publisher's site. Linked for people to look at, never downloaded or sent
+   * to a translator; the publisher holds its copyright.
+   */
+  imageUrl?: string;
 }
 
 export function loadDataset(name: DatasetName): EvalItem[] {
@@ -118,7 +124,11 @@ interface CrochetBenchRecord {
   pattern_name: string;
   instructions: string;
   prompt?: string;
+  image_link?: string;
 }
+
+/** Only https links are kept. */
+const imageUrl = (r: CrochetBenchRecord) => (r.image_link?.startsWith("https://") ? r.image_link : undefined);
 
 /**
  * Task D-step. Each prompt is
@@ -143,6 +153,7 @@ export function loadCrochetBenchStep(records: unknown, split: string): EvalItem[
       english: target,
       context,
       statedCount: statedCount(target),
+      imageUrl: imageUrl(r),
     };
   });
 }
@@ -197,6 +208,7 @@ export function loadCrochetBenchProject(records: unknown): EvalItem[] {
             id: `project-${pad(i)}`,
             name: r.pattern_name.trim(),
             english: unixLines(r.instructions),
+            imageUrl: imageUrl(r),
           },
         ]
       : [],

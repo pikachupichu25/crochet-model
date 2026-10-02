@@ -1,11 +1,22 @@
 import { fileURLToPath } from "node:url";
 import react from "@vitejs/plugin-react";
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
+import { evalViewerMiddleware } from "../eval/src/viewer.ts";
 
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 
+// The eval results page (eval.html) reads the git-ignored run directories
+// through this; dev only, so no dataset text reaches a build.
+const evalRuns: Plugin = {
+  name: "eval-runs",
+  apply: "serve",
+  configureServer(server) {
+    server.middlewares.use("/__eval", evalViewerMiddleware());
+  },
+};
+
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), evalRuns],
   server: {
     port: 5180,
     strictPort: true,

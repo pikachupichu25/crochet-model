@@ -79,4 +79,17 @@ describe("parseStepPrompt", () => {
       statedCount: 3,
     });
   });
+
+  it("keeps an https image link and drops any other", () => {
+    const record = (image_link: string) => ({
+      id: "X",
+      pattern_name: "Hat",
+      instructions: "",
+      image_link,
+      prompt: "Now translate the NL into DSL:\nNL: ch 4\nDSL:\n",
+    });
+    const [https, http] = loadCrochetBenchStep([record("https://example.com/a.jpg"), record("http://example.com/b.jpg")], "step_1_2");
+    expect(https!.imageUrl).toBe("https://example.com/a.jpg");
+    expect(http!.imageUrl).toBeUndefined();
+  });
 });
