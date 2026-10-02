@@ -1,14 +1,15 @@
 // The model (FR-4.x, FR-3.2, FR-3.5): the checked pattern laid out in the
-// layout worker and drawn in structure mode. Lays out again when the code
-// changes; failed rows are left out and the panel says so.
+// layout worker and drawn in structure or symbol mode (docs/symbol). Lays out
+// again when the code changes; failed rows are left out and the panel says so.
 
-import { applyObjectTransforms, readObjectTransforms, type Dimension, type Stitch } from "@crochet-model/core";
+import { applyObjectTransforms, readObjectTransforms, type Dimension, type LegendEntry, type Stitch } from "@crochet-model/core";
 import { useEffect, useRef, useState } from "react";
 import { layoutClient, setDimension, useCheck } from "../check.ts";
 import { guessDimension, rowLabel, summarise } from "../pattern.ts";
 import { selectRow, useApp } from "../store.ts";
-import { StructureView, type ColorMode } from "../view/structureView.ts";
+import { ModelView, type ColorMode, type ViewMode } from "../view/modelView.ts";
 import { LayoutCancelled } from "../workers/clients.ts";
+import { SymbolLegend } from "./SymbolLegend.tsx";
 
 const QUALITY = { draft: 150, normal: 500, fine: 1500 } as const;
 type Quality = keyof typeof QUALITY;
@@ -16,6 +17,27 @@ type Quality = keyof typeof QUALITY;
 interface Progress {
   fraction: number;
   text: string;
+}
+
+// The view mode the user picked, per dimension (SYM-FR-1.3); unset means the
+// default: symbols for 2D, structure for 3D (SYM-FR-1.4).
+const MODE_KEY = "view.mode";
+type ModeChoice = Partial<Record<Dimension, ViewMode>>;
+
+function readModes(): ModeChoice {
+  try {
+    return JSON.parse(localStorage.getItem(MODE_KEY) ?? "{}") as ModeChoice;
+  } catch {
+    return {};
+  }
+}
+
+function writeModes(modes: ModeChoice) {
+  try {
+    localStorage.setItem(MODE_KEY, JSON.stringify(modes));
+  } catch {
+    // Storage blocked: the choice lasts until the page reloads.
+  }
 }
 
 export function ModelPanel() {
@@ -26,10 +48,13 @@ export function ModelPanel() {
   const translations = useApp((s) => s.translations);
   const selectedRowId = useApp((s) => s.selectedRowId);
   const host = useRef<HTMLDivElement>(null);
-  const view = useRef<StructureView | null>(null);
+  const view = useRef<ModelView | null>(null);
   const [quality, setQuality] = useState<Quality>("normal");
   const [seed, setSeed] = useState<number | undefined>();
-  const [colorMode, setColorMode] = useState<ColorMode>("yarn");
+  const [modes, setModes] = useState<ModeChoice>(readModes);
+  // Each mode keeps its own colour: symbols default to ink (SYM-FR-4.3).
+  const [colors, setColors] = useState<Record<ViewMode, ColorMode>>({ structure: "yarn", symbols: "ink" });
+  const [legend, setLegend] = useState<LegendEntry[]>();
   const [progress, setProgress] = useState<Progress>();
   const [info, setInfo] = useState<string>();
   const [laidOut, setLaidOut] = useState<string>();
@@ -42,9 +67,10 @@ export function ModelPanel() {
   ownersRef.current = owners;
 
   useEffect(() => {
-    const v = new StructureView(host.current!);
+    const v = new ModelView(host.current!);
     view.current = v;
     v.onHover = (h) => setHover(h ? { stitch: h.stitch, x: h.x, y: h.y } : undefined);
+    v.onLegend = setLegend;
     v.onPick = (stitch) => selectRow(stitch ? ownersRef.current?.[stitch.row] : undefined);
     return () => v.dispose();
   }, []);
@@ -90,7 +116,15 @@ export function ModelPanel() {
     if (ids.length) v.focusSelection();
   }, [selectedRowId, owners, check, laidOut]);
 
-  useEffect(() => view.current?.setOptions({ colorMode }), [colorMode]);
+  const dimension = check?.dimension ?? 3;
+  const mode: ViewMode = modes[dimension] ?? (dimension === 2 ? "symbols" : "structure");
+  const colorMode = colors[mode];
+  const chooseMode = (m: ViewMode) => {
+    const next = { ...modes, [dimension]: m };
+    setModes(next);
+    writeModes(next);
+  };
+  useEffect(() => view.current?.setOptions({ mode, colorMode }), [mode, colorMode]);
 
   const auto = guessDimension(rows, translations);
   const hoverRow = hover && owners ? rows.find((r) => r.id === owners[hover.stitch.row]) : undefined;
@@ -103,6 +137,10 @@ export function ModelPanel() {
       <div className="model-head">
         <h2>Model</h2>
         <div className="model-controls">
+          <select aria-label="View" value={mode} onChange={(e) => chooseMode(e.target.value as ViewMode)}>
+            <option value="structure">Structure</option>
+            <option value="symbols">Symbols</option>
+          </select>
           <select
             aria-label="Dimension"
             value={override ?? "auto"}
@@ -117,7 +155,8 @@ export function ModelPanel() {
             <option value="normal">Normal</option>
             <option value="fine">Fine</option>
           </select>
-          <select aria-label="Colour" value={colorMode} onChange={(e) => setColorMode(e.target.value as ColorMode)}>
+          <select aria-label="Colour" value={colorMode} onChange={(e) => setColors({ ...colors, [mode]: e.target.value as ColorMode })}>
+            {mode === "symbols" && <option value="ink">Ink</option>}
             <option value="yarn">Yarn colour</option>
             <option value="type">By stitch</option>
           </select>
@@ -171,6 +210,9 @@ export function ModelPanel() {
           </div>
         )}
       </div>
+      {mode === "symbols" && legend && legend.length > 0 && (
+        <SymbolLegend entries={legend} onHighlight={(key) => view.current?.setHighlightKey(key)} />
+      )}
       <p className="model-foot hint">
         {info ?? (checking ? "Checking…" : "")} {owners ? "· Click a stitch to find its row." : ""}
       </p>

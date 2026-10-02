@@ -5,7 +5,7 @@
 
 import { applyObjectTransforms, readObjectTransforms, type Dimension, type Stitch } from "@crochet-model/core";
 import { useEffect, useRef, useState } from "react";
-import { StructureView, type ColorMode } from "../view/structureView.ts";
+import { ModelView, type ColorMode } from "../view/modelView.ts";
 import { LayoutCancelled, LayoutClient, ParserClient } from "../workers/clients.ts";
 
 const QUALITY = { draft: 150, normal: 500, fine: 1500 } as const;
@@ -31,7 +31,7 @@ export const earlierCp = (context: { cp: string }[] | undefined) =>
 /** `autoDimension` replaces the guess from `cp`, so models compared side by side match. */
 export function CpModel({ cp, autoDimension }: { cp: string; autoDimension?: Dimension }) {
   const host = useRef<HTMLDivElement>(null);
-  const view = useRef<StructureView | null>(null);
+  const view = useRef<ModelView | null>(null);
   const cancel = useRef<() => void>(undefined);
   const layoutClient = useRef<LayoutClient>(undefined);
   const [override, setOverride] = useState<Dimension>();
@@ -47,7 +47,7 @@ export function CpModel({ cp, autoDimension }: { cp: string; autoDimension?: Dim
   const dimension = override ?? auto;
 
   useEffect(() => {
-    const v = new StructureView(host.current!);
+    const v = new ModelView(host.current!);
     view.current = v;
     v.onHover = (h) => setHover(h ? { stitch: h.stitch, x: h.x, y: h.y } : undefined);
     v.setOptions({ colorMode: "type" });

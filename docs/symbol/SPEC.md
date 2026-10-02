@@ -1,6 +1,6 @@
 # Symbol Mode: Technical Specification
 
-> Status: draft, not started  
+> Status: S1 (2D chart) built; S2 and S3 not started  
 > Last updated: 2026-10-02  
 > Purpose: define how to build what [REQUIREMENTS.md](./REQUIREMENTS.md) asks for: the data that places each symbol, the symbol definitions, the three.js view, the legend and the SVG export.
 
@@ -31,23 +31,28 @@ StitchGraph + positions (after TRANSFORM_OBJECT)        main SPEC §3.3, §3.4
 
 Everything up to `SymbolScene` is pure TypeScript in `packages/core`, so it runs in Node for tests and for SVG export, and in the browser on the main thread. It is a function of the graph, the positions and the options (SYM-NFR-3). No worker is needed: a 3,000-stitch model is a few tens of thousands of points (§8).
 
-New and changed files:
+Files (S1 built, except where marked):
 
 ```text
 packages/core/src/symbols/
-  legs.ts          StitchGraph + positions → Leg[] per stitch (§3)
+  legs.ts          StitchGraph + positions → Leg[] per stitch (§3); yarnUnit()
   frames.ts        per-stitch frame (§3.4); shared later with the yarn renderer (main SPEC §6.3)
-  glyphs.ts        symbol definitions in a unit frame (§4)
+  glyphs.ts        symbol definitions in leg and top frames (§4)
+  draw.ts          one placement's glyph in world space, and its pick quad (§4.4)
   scene.ts         buildSymbolScene(): legs + frames + glyphs → SymbolScene (§4.5)
-  composite.ts     names composite stitches for the legend: sc2inc, dc2tog (§6.3)
-  svg.ts           SymbolScene (2D) → SVG chart text (§7)
-packages/core/test/symbols/  legs, glyphs, scene, svg tests (§9)
+  legend.ts        legend keys (sc2inc, dc2tog, picot3), US names, counts, icons (§6.3)
+  stitchTypes.ts   typeParts() and baseType(): base stitch and loop, post, reverse, spike affixes
+  vec.ts           tuple vector helpers
+  svg.ts           SymbolScene (2D) → SVG chart text (§7); S3
+packages/core/test/symbols.test.ts   legs, ring rule, glyphs, scene, legend (§9)
 packages/app/src/view/
-  baseView.ts      camera, controls, resize, render-on-demand, picking: split out of structureView.ts
-  structureView.ts unchanged behaviour, now on baseView
-  symbolView.ts    the symbol renderer (§5)
+  modelView.ts     ModelView: camera, controls, resize, render-on-demand, picking, highlights (§5.1)
+  layer.ts         the Layer interface and view options
+  structureLayer.ts  structure mode, moved out of the old structureView.ts unchanged
+  symbolLayer.ts   symbol mode (§5.2 to §5.5)
+  palette.ts       type palette and highlight colours, shared by both layers
 packages/app/src/ui/
-  ModelPanel.tsx   View control, legend, export buttons (§6)
+  ModelPanel.tsx   View control, colour per mode, legend; export buttons in S3 (§6)
   SymbolLegend.tsx the legend (§6.3)
 ```
 
@@ -110,7 +115,7 @@ function placeStitches(graph: StitchGraph, positions: Record<string, number[]>):
 For each stitch, in this order:
 
 1. **No drawn form** (`hidden`, and the types in SYM-FR-2.5): no placement.
-2. **`ch`, `ring`:** no legs.
+2. **`ch`, `ring`, `ss`:** no legs (a slip stitch is a dot at its top, §4.3).
 3. **Into a chain space** (`intoSpace`): one leg, its foot at the statement's internal node that has incoming `constraint` edges (the `B` node in §2). If that node has no position, the foot is the mean of the `workedInto` tops.
 4. **Otherwise:** one leg per `workedInto` stitch, its foot at that stitch's top node. Jacobian nodes (loop and post attachments) are not feet: the leg goes to the stitch worked into, and the loop or post mark (§4.3) shows the side.
 
@@ -184,7 +189,7 @@ Sizes are in units; `w` is the half-width of a symbol, 0.35 by default.
 | `dc3pc`–`dc5pc` | S3 | | N posts fanned, closed by a cap arc |
 | unknown | post | open square, side 0.3, at the top | SYM-FR-2.6 |
 
-The type is matched after stripping the loop and post affixes, as `baseType()` in `structureView.ts` does now, so `fptrbl` (if a pattern defines one) still gets a `tr` with a hook and an arc. `baseType()` moves to core so both views share it.
+The type is matched after stripping the loop, post, reverse and spike affixes (`typeParts()` in core `stitchTypes.ts`), so `fptrbl` (if a pattern defines one) still gets a `tr` with a hook and an arc. The structure view's palette uses the same `baseType()`.
 
 ### 4.4 Placement rules
 
@@ -195,34 +200,33 @@ The type is matched after stripping the loop and post affixes, as `baseType()` i
 
 ### 4.5 The scene
 
+As built in S1. S2 adds `"rows"` to `colorMode`, and `yarnPath` and `rowLabels` to the scene (SYM-FR-4.4, 4.6).
+
 ```ts
 interface SymbolOptions {
-  colorMode: "ink" | "yarn" | "type" | "rows";   // SYM-FR-4.3, 4.4
-  yarnPath: boolean;                               // SYM-FR-4.6
-  rowNumbers: boolean;
+  colorMode: "ink" | "yarn" | "type";            // SYM-FR-4.3
 }
 
 interface SymbolScene {
   dimension: 2 | 3;
   unit: number;
-  glyphs: PlacedGlyph[];        // one per drawn stitch, in working order
-  ring?: { at: Vec3; radius: number };
-  yarnPath?: Vec3[][];          // one polyline per colour run
-  rowLabels?: { row: number; at: Vec3 }[];
+  glyphs: PlacedGlyph[];        // one per drawn stitch, in working order; the ring is one too
   bounds: { min: Vec3; max: Vec3 };
 }
 
 interface PlacedGlyph {
   stitchId: string;
-  type: string;                 // the legend key (§6.3), e.g. "sc2inc"
-  colorKey: string;             // what colorMode resolves: a COLOR: name, a type, a row parity
+  statement: number;            // the legend counts statements, so a sc2inc counts once
+  key: string;                  // the legend key (§6.3), e.g. "sc2inc"
+  colorKey: string;             // what colorMode resolves: "ink", a COLOR: name, a base type
   lines: Vec3[][];              // polylines in world space
   dots: { at: Vec3; radius: number }[];
   hit: [Vec3, Vec3, Vec3, Vec3]; // quad covering the glyph, in its frame plane (SYM-FR-4.2)
   out: Vec3;                    // for far-side fading in 3D
+  fallback: boolean;            // drawn with the fallback mark (SYM-FR-2.6)
 }
 
-function buildSymbolScene(graph: StitchGraph, positions: Record<string, number[]>, options: SymbolOptions): SymbolScene;
+function buildSymbolScene(graph: StitchGraph, positions: Record<string, number[]>, dimension: 2 | 3, options: SymbolOptions): SymbolScene;
 ```
 
 Colour keys, not colours, are stored: the view and the SVG writer resolve them against the theme (SYM-FR-4.5), so a theme change does not rebuild the scene.
@@ -233,24 +237,31 @@ For now each family has **one** mark: one arc for back and front loop, one hook 
 
 ## 5. Symbol view
 
-### 5.1 Shared base
+### 5.1 One view, two layers
 
-`structureView.ts` is split: camera, `OrbitControls`, lights, resize, render-on-demand, `fit()`, `focusSelection()`, hover and click detection move to `BaseView`. `StructureView` and `SymbolView` extend it and differ only in what they build and how they hit-test. `ModelPanel` keeps one view object and one canvas, and swaps the model inside it, so switching mode keeps the camera (SYM-FR-1.2).
+The old `structureView.ts` became `ModelView` (`modelView.ts`): camera, `OrbitControls`, lights, resize, render-on-demand, `fit()`, `focusSelection()`, hover and click detection. What it draws is a **layer**, chosen by `options.mode`; switching mode rebuilds only the layer inside the same scene, so the camera stays where it is and the layout is not re-run (SYM-FR-1.2). Layers were chosen over subclasses of a base view so one canvas and one camera serve both modes.
 
 ```ts
-abstract class BaseView {
+interface Layer {
+  build(ctx: BuildContext): void;                   // adds meshes to ctx.group
+  stitchAt(raycaster: THREE.Raycaster): Stitch | undefined;
+  paint(state: PaintState): void;                   // hover, bases, selection, legend highlight
+  resize?(width: number, height: number): void;
+}
+
+class ModelView {
   setModel(graph: StitchGraph, layout: LayoutResult): void;
+  setOptions(options: Partial<{ mode: "structure" | "symbols"; colorMode: "yarn" | "type" | "ink"; showInternal: boolean }>): void;
   setSelection(ids: Iterable<string>): void;
-  setHighlightType(type: string | undefined): void;   // legend hover, SYM-FR-5.3
+  setHighlightKey(key: string | undefined): void;   // legend hover, SYM-FR-5.3
   focusSelection(): void;
   fit(): void;
-  snapshot(): Promise<Blob>;                          // PNG, SYM-FR-6.2
   onHover; onPick;
-  protected abstract build(): void;
-  protected abstract stitchAt(pointer: THREE.Vector2): Stitch | undefined;
-  protected abstract paint(): void;
+  onLegend: (entries: LegendEntry[] | undefined) => void;  // after each build; undefined in structure mode
 }
 ```
+
+`snapshot()` for PNG export (SYM-FR-6.2) comes in S3. The harness and the eval and datasets pages use `ModelView` in structure mode until S3 gives them the View select.
 
 ### 5.2 Lines
 
@@ -289,8 +300,8 @@ Hover, base and selection colours are the existing `HOVER_COLOR`, `BASE_COLOR` a
 
 ### 6.1 Model panel
 
-- A **View** select (Structure, Symbols) before the Dimension select. Saved in `localStorage` under `view.mode`, read in a `try` (the app's existing pattern for browser settings). When nothing is saved, the default follows the layout's dimension (SYM-FR-1.4).
-- The **Colour** select gains *Ink* and *Alternate rows* in symbol mode; *Ink* is selected when entering symbol mode unless the user picked another colour there before.
+- A **View** select (Structure, Symbols) before the Dimension select. The choice is saved **per dimension** in `localStorage` under `view.mode` (`{"2": "symbols", "3": "structure"}`), read and written in a `try`. A dimension with no saved choice gets the default: symbols for 2D, structure for 3D (SYM-FR-1.4). Saving per dimension keeps both rules: a user who turns symbols off for a flat piece still gets the 3D default, and the other way round.
+- The **Colour** select gains *Ink* in symbol mode (*Alternate rows* in S2). Each mode keeps its own colour for the session: symbols start on *Ink*, structure on *Yarn colour*.
 - A **Symbols** menu (a small popover) with: yarn path, row numbers, and in 3D, surface (on by default).
 - **Export**: "PNG" always; "SVG chart" in symbol mode on a 2D layout.
 
@@ -302,9 +313,9 @@ Hover, base and selection colours are the existing `HOVER_COLOR`, `BASE_COLOR` a
 
 `SymbolLegend` lists the `type` keys of the scene's glyphs, with counts, in a fixed order: `ch`, `ss`, `sc`, `hdc`, `dc`, `tr`, `dtr`, `trtr`, then composites, loop and post variants, specials, then "No symbol".
 
-- **Composite names** (`composite.ts`): stitches sharing a statement and a single foot, n of them, are `{type}{n}inc`; a stitch with n feet that are not a chain space is `{type}{n}tog`. A `sc2inc` and a `sc2tog` are one legend entry each, not two `sc`.
+- **Composite names** (`legend.ts`): stitches sharing a statement and a single foot, n of them, are `{type}{n}inc`; a stitch with n feet that are not a chain space is `{type}{n}tog`; a statement of three `ch` and an `ss` is `picot3`. A `sc2inc` and a `sc2tog` are one legend entry each, not two `sc`. Counts are statements, so `6*sc2inc` counts 6.
 - Each entry's symbol is drawn by the same `glyphs.ts` definitions into a small inline `<svg>` (§7), so the legend always matches the view.
-- Names come from a table in `composite.ts` (US terms and abbreviation: "single crochet (sc)", "sc 2 together (sc2tog)"). UK names are not shown; the app converts UK patterns to US before translation (FR-1.2).
+- Names come from a table in `legend.ts` (US terms, with the key shown as the abbreviation: "single crochet `sc`", "single crochet 2 together `sc2tog`"). UK names are not shown; the app converts UK patterns to US before translation (FR-1.2).
 - Hovering an entry calls `setHighlightType(type)` (SYM-FR-5.3).
 
 ### 6.4 Other pages
@@ -329,14 +340,14 @@ Budget for 3,000 stitches (SYM-NFR-1): about 3,000 glyphs × up to 12 segments �
 
 ## 9. Testing
 
-Unit tests in `packages/core/test/symbols/`, all in Node with the vendored parser:
+Unit tests in `packages/core/test/symbols.test.ts`, all in Node with the vendored parser and solver:
 
-- **Legs** on small patterns: `sc2inc` gives two placements with the same foot; `sc2tog` and `dc2tog` give one placement with two legs; `3dc` into a chain space gives three placements whose feet are their `B` nodes, not two stitches each; `ring` + `6sc` gives six legs with `onRing`; `fpdc` and `scbl` legs end at the stitch worked into, not at the jacobian node; `ch` and `ring` have no legs; `hidden` and `sk` give no placement.
-- **Ring rule** (§3.2) on every bundled example and sample: no leg is marked `onRing` unless its row starts on a `ring`, and every stitch of a round worked into a ring is.
+- **Legs** on small patterns: `sc2inc` gives two placements with the same foot; `sc2tog` and `dc2tog` give one placement with two legs; `3dc` into a chain space gives three one-legged placements, and those with `intoSpace` stand on their `B` node, not on the two chains either side; `ring` + `6sc` gives six legs with `onRing`; `fpdc` and `scbl` legs end at the stitch worked into, not at the jacobian node; `ch`, `ring` and `ss` have no legs.
+- **Ring rule** (§3.2) on every bundled example with a magic ring (`textEarth` left out: its parse takes 2 s and slows the conformance run beside it): no leg is marked `onRing` unless its row has a stitch worked into a `ring`, and every stitch worked straight into a ring is.
 - **Glyphs:** every built-in in `builtinStitches()` (core `nodeParser.ts`) maps to a glyph or to the fallback, and only the S3 types to the fallback; this test fails when a vendor upgrade adds a stitch type. Until ISSUE-003 is fixed, `scbl` and `scfl` (and `fpdc` and `bpdc`) give the same strokes; the test asserts this so the fix has to change it on purpose.
 - **Scene:** for a fixed graph and positions, a stretched `dc` keeps its bar width and slash angle (§4.1); `bounds` contains every point; a 2D scene has `z = 0` everywhere.
 - **Composite names:** the samples' legends list `sc2inc` and `sc2tog` with the counts the pattern states.
-- **SVG:** the granny square sample's SVG parses as XML, has one `<g class="sym …">` per drawn stitch, and matches a stored snapshot.
+- **SVG** (S3): the granny square sample's SVG parses as XML, has one `<g class="sym …">` per drawn stitch, and matches a stored snapshot.
 
 In the browser, during S1 and S2, by the preview workflow: switch modes on each sample, check the console is clean, hover and click a symbol and see the review row selected, and screenshot each sample in symbol mode for the chart match check (REQUIREMENTS §7).
 
@@ -346,7 +357,7 @@ As REQUIREMENTS §9, with the files each touches.
 
 | Milestone | Files | Exit check |
 | --- | --- | --- |
-| **S1 2D chart** | `legs.ts`, `frames.ts` (2D), `glyphs.ts` (all but S3 types), `scene.ts`, `composite.ts`; `baseView.ts`, `symbolView.ts`; View select, colour modes, legend | Unit tests (§9) pass; granny square and swatch match a published chart |
+| **S1 2D chart** (built) | `legs.ts`, `frames.ts` (2D), `glyphs.ts` (all but S3 types), `draw.ts`, `scene.ts`, `legend.ts`; `modelView.ts` with structure and symbol layers; View select, colour modes, legend | Unit tests (§9) pass; granny square and swatch match a published chart (crocheter check pending) |
 | **S2 3D** | `frames.ts` (3D, sign propagation), surface, far-side fading, row labels, yarn path | Ball sample: the round where increases stop is findable in symbol mode |
 | **S3 Export and more** | `svg.ts`, PNG snapshot, puff, bobble and popcorn glyphs, harness and eval/datasets pages | Symbol recognition test passes; SVG opens in Inkscape with one group per symbol |
 

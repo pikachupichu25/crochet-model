@@ -1,6 +1,6 @@
 # Symbol Mode: Requirements
 
-> Status: draft, not started  
+> Status: S1 (2D chart) built; S2 and S3 not started  
 > Last updated: 2026-10-02  
 > Purpose: add a view mode that draws the laid-out model with standard crochet chart symbols, one symbol per stitch, instead of spheres at nodes and cylinders along edges.
 
@@ -85,7 +85,7 @@ Two observations make symbol mode practical:
 
 - **SYM-FR-1.1** The model view has a **View** control with *Structure* and *Symbols* (and *Yarn* once M4 is built). It sits with the existing Dimension, Quality and Colour controls in the model panel.
 - **SYM-FR-1.2** Switching view mode **does not re-run the layout**. It reuses the graph and positions already laid out, including `TRANSFORM_OBJECT:` moves (SPEC §3.4).
-- **SYM-FR-1.3** The chosen mode is remembered in the browser, alongside the other view settings.
+- **SYM-FR-1.3** The chosen mode is remembered in the browser, separately for 2D and 3D layouts.
 - **SYM-FR-1.4** The default mode is *Symbols* for 2D layouts and *Structure* for 3D layouts (decided 2026-10-02, §11).
 - **SYM-FR-1.5** Symbol mode is available wherever the structure view is: the main app, the M0 harness, and the eval and datasets pages (they share `StructureView`).
 

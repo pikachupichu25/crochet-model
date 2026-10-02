@@ -4,7 +4,7 @@
 
 import { applyObjectTransforms, readObjectTransforms } from "@crochet-model/core";
 import type { Dimension, StitchGraph, ValidationResult } from "@crochet-model/core";
-import { StructureView, type ColorMode } from "./view/structureView.ts";
+import { ModelView, type ColorMode } from "./view/modelView.ts";
 import { LayoutCancelled, LayoutClient, ParserClient } from "./workers/clients.ts";
 
 const EXAMPLES: Record<string, string> = {
@@ -45,7 +45,7 @@ let latestGraph: StitchGraph | undefined;
 let latestText = "";
 let validateSeq = 0;
 
-const view = new StructureView($("view"));
+const view = new ModelView($("view"));
 view.onHover = (info) => {
   tooltip.hidden = !info;
   if (!info) return;
