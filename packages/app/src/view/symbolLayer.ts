@@ -1,18 +1,22 @@
 // Symbol mode (docs/symbol/SPEC.md §5): one crochet chart symbol per stitch,
 // placed by the layout. All strokes are one fat-line mesh (WebGL ignores
 // lineWidth above 1), slip-stitch dots one instanced disc mesh, and an
-// invisible quad per symbol is what the pointer hits.
+// invisible quad per symbol is what the pointer hits. In 3D a shaded surface
+// hides the far side; with it off, symbols facing away fade instead.
 
-import { buildSymbolScene, legendEntries, type LegendEntry, type PlacedGlyph, type Stitch, type SymbolScene } from "@crochet-model/core";
+import { buildSymbolScene, legendEntries, type LegendEntry, type PlacedGlyph, type Stitch, type Surface, type SymbolScene } from "@crochet-model/core";
 import * as THREE from "three";
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
-import type { BuildContext, Layer, PaintState } from "./layer.ts";
+import type { BuildContext, Layer, PaintState, RowAnchor } from "./layer.ts";
 import { BASE_COLOR, HOVER_COLOR, SELECT_COLOR, typeColor, yarnColor } from "./palette.ts";
 
 /** Line width, in yarn units: ink that scales with the model, like paper. */
 const LINE_WIDTH = 0.06;
+const YARN_PATH_WIDTH = 0.025;
+/** How far a far-side symbol is blended into the background (SYM-FR-3.8). */
+const FADE = 0.75;
 const Z = new THREE.Vector3(0, 0, 1);
 
 export class SymbolLayer implements Layer {
@@ -23,9 +27,14 @@ export class SymbolLayer implements Layer {
   private ranges: { seg: number; segs: number; dot: number; dots: number }[] = [];
   private lineColors: Float32Array | undefined;
   private lineGeometry: LineSegmentsGeometry | undefined;
-  private material: LineMaterial | undefined;
   private dotMesh: THREE.InstancedMesh | undefined;
   private hitMesh: THREE.InstancedMesh | undefined;
+  private materials: LineMaterial[] = [];
+  /** Per glyph: the centre of its pick quad, where facing is measured. */
+  private anchors: THREE.Vector3[] = [];
+  private background = new THREE.Color();
+  /** 3D with the surface off: paint fades by camera. */
+  followsCamera = false;
 
   /** Called with the legend after every build. */
   onLegend: ((entries: LegendEntry[]) => void) | undefined;
@@ -37,9 +46,23 @@ export class SymbolLayer implements Layer {
     const byId = new Map(graph.stitches.map((s) => [s.id, s]));
     this.stitches = scene.glyphs.map((g) => byId.get(g.stitchId)!);
     const ink = cssColor("--ink", "#2a2420");
-    this.baseColors = scene.glyphs.map((g, i) =>
-      colorMode === "ink" ? ink : colorMode === "yarn" ? yarnColor(this.stitches[i]!.color) : typeColor(g.colorKey),
-    );
+    const inkAlt = cssColor("--ink-alt", "#2f63a8");
+    this.background = cssColor("--card", "#fbf8f1");
+    this.baseColors = scene.glyphs.map((g, i) => {
+      switch (colorMode) {
+        case "yarn":
+          return yarnColor(this.stitches[i]!.color);
+        case "type":
+          return typeColor(g.colorKey);
+        case "rows":
+          return g.colorKey === "row1" ? inkAlt : ink;
+        default:
+          return ink;
+      }
+    });
+    this.anchors = scene.glyphs.map((g) => mean(g.hit));
+    this.followsCamera = scene.dimension === 3 && !options.surface;
+    this.materials = [];
 
     // Lines: every polyline as segments, glyph by glyph.
     const positions: number[] = [];
@@ -57,8 +80,21 @@ export class SymbolLayer implements Layer {
     this.lineColors = new Float32Array(positions.length);
     geometry.setColors(this.lineColors);
     this.lineGeometry = geometry;
-    this.material = new LineMaterial({ vertexColors: true, worldUnits: true, linewidth: LINE_WIDTH * scene.unit });
-    group.add(new LineSegments2(geometry, this.material));
+    const material = new LineMaterial({ vertexColors: true, worldUnits: true, linewidth: LINE_WIDTH * scene.unit });
+    this.materials.push(material);
+    group.add(new LineSegments2(geometry, material));
+
+    if (options.yarnPath && scene.yarnPath.length) {
+      const path: number[] = [];
+      for (const run of scene.yarnPath) for (let i = 1; i < run.length; i++) path.push(...run[i - 1]!, ...run[i]!);
+      const pathGeometry = new LineSegmentsGeometry();
+      pathGeometry.setPositions(new Float32Array(path));
+      const pathMaterial = new LineMaterial({ color: cssColor("--yarn", "#3d64b3"), worldUnits: true, linewidth: YARN_PATH_WIDTH * scene.unit });
+      this.materials.push(pathMaterial);
+      group.add(new LineSegments2(pathGeometry, pathMaterial));
+    }
+
+    if (scene.surface && options.surface) group.add(surfaceMesh(scene.surface, cssColor("--card", "#fbf8f1")));
 
     // Slip-stitch dots: flat discs facing out of the fabric.
     const m = new THREE.Matrix4();
@@ -96,16 +132,23 @@ export class SymbolLayer implements Layer {
     return hit?.instanceId !== undefined ? this.stitches[hit.instanceId] : undefined;
   }
 
-  paint({ hover, bases, selected, highlightKey }: PaintState): void {
+  rowAnchors(): RowAnchor[] {
+    return (this.scene?.rowLabels ?? []).map((l) => ({ row: l.row, at: new THREE.Vector3(...l.at), out: new THREE.Vector3(...l.out) }));
+  }
+
+  paint({ hover, bases, selected, highlightKey, eye }: PaintState): void {
     const scene = this.scene;
     const colors = this.lineColors;
     if (!scene || !colors || !this.lineGeometry || !this.dotMesh) return;
     const hoverColor = new THREE.Color(HOVER_COLOR);
     const baseColor = new THREE.Color(BASE_COLOR);
     const selectColor = new THREE.Color(SELECT_COLOR);
+    const faded = new THREE.Color();
+    const toEye = new THREE.Vector3();
+    const out = new THREE.Vector3();
     scene.glyphs.forEach((g, i) => {
       const id = g.stitchId;
-      const color =
+      let color =
         id === hover?.id || g.key === highlightKey
           ? hoverColor
           : bases.has(id)
@@ -113,6 +156,9 @@ export class SymbolLayer implements Layer {
             : selected.has(id)
               ? selectColor
               : this.baseColors[i]!;
+      if (this.followsCamera && out.set(...g.out).dot(toEye.subVectors(eye, this.anchors[i]!)) < 0) {
+        color = faded.copy(color).lerp(this.background, FADE);
+      }
       const { seg, segs, dot, dots } = this.ranges[i]!;
       for (let k = seg * 6; k < (seg + segs) * 6; k += 3) {
         colors[k] = color.r;
@@ -127,8 +173,31 @@ export class SymbolLayer implements Layer {
   }
 
   resize(width: number, height: number): void {
-    this.material?.resolution.set(width, height);
+    for (const m of this.materials) m.resolution.set(width, height);
   }
+}
+
+/** Opaque and lit, in the background colour, pushed back so symbols on it always win the depth test. */
+function surfaceMesh(surface: Surface, color: THREE.Color): THREE.Mesh {
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(surface.vertices.flat()), 3));
+  geometry.setIndex(surface.triangles);
+  geometry.computeVertexNormals();
+  const material = new THREE.MeshStandardMaterial({
+    color,
+    roughness: 1,
+    side: THREE.DoubleSide,
+    polygonOffset: true,
+    polygonOffsetFactor: 1,
+    polygonOffsetUnits: 1,
+  });
+  return new THREE.Mesh(geometry, material);
+}
+
+function mean(points: number[][]): THREE.Vector3 {
+  const m = new THREE.Vector3();
+  for (const p of points) m.add(new THREE.Vector3(p[0], p[1], p[2]));
+  return m.divideScalar(Math.max(points.length, 1));
 }
 
 /** Maps the unit plane onto a glyph's pick quad. */

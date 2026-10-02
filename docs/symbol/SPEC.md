@@ -1,6 +1,6 @@
 # Symbol Mode: Technical Specification
 
-> Status: S1 (2D chart) built; S2 and S3 not started  
+> Status: S1 (2D chart) and S2 (3D) built; S3 not started  
 > Last updated: 2026-10-02  
 > Purpose: define how to build what [REQUIREMENTS.md](./REQUIREMENTS.md) asks for: the data that places each symbol, the symbol definitions, the three.js view, the legend and the SVG export.
 
@@ -39,7 +39,8 @@ packages/core/src/symbols/
   frames.ts        per-stitch frame (§3.4); shared later with the yarn renderer (main SPEC §6.3)
   glyphs.ts        symbol definitions in leg and top frames (§4)
   draw.ts          one placement's glyph in world space, and its pick quad (§4.4)
-  scene.ts         buildSymbolScene(): legs + frames + glyphs → SymbolScene (§4.5)
+  scene.ts         buildSymbolScene(): legs + frames + glyphs → SymbolScene, with row labels and yarn path (§4.5)
+  surface.ts       the 3D surface under the symbols (§5.4)
   legend.ts        legend keys (sc2inc, dc2tog, picot3), US names, counts, icons (§6.3)
   stitchTypes.ts   typeParts() and baseType(): base stitch and loop, post, reverse, spike affixes
   vec.ts           tuple vector helpers
@@ -133,7 +134,7 @@ Each placement has an orthonormal frame:
 
 - **up**: from the mean foot to the top, normalised. A chain has no feet: up is the 2D normal of its along direction in 2D, and the mean up of its row's neighbours in 3D.
 - **along**: from the previous to the next stitch's top in working order (yarn edges), made orthogonal to up. At the ends of a row, one-sided.
-- **out**: in 2D, `+z`. In 3D, `up × along`, its sign made consistent across the fabric by the propagation in main SPEC §6.3.
+- **out**: in 2D, `+z`. In 3D, `up × along`, then made consistent by `orientFrames()`: a breadth-first walk from the first stitch over yarn and leg neighbours (so separate pieces never vote on each other) flips any frame whose `out` disagrees with the neighbours already set; then the whole fabric is flipped if needed so `out` points away from its centre, the outside of a closed shape. `across` flips with `out`, so symbols are never mirrored. On the ball and beanie samples every frame ends up facing out; on a turned swatch laid out in 3D every stitch agrees with the ones it is worked into.
 - **across** = `out × up`: the in-surface direction perpendicular to the leg, used for the width of symbols.
 
 `frames.ts` exports this so the yarn renderer (M4) can use the same frames.
@@ -200,17 +201,20 @@ The type is matched after stripping the loop, post, reverse and spike affixes (`
 
 ### 4.5 The scene
 
-As built in S1. S2 adds `"rows"` to `colorMode`, and `yarnPath` and `rowLabels` to the scene (SYM-FR-4.4, 4.6).
+As built in S2.
 
 ```ts
 interface SymbolOptions {
-  colorMode: "ink" | "yarn" | "type";            // SYM-FR-4.3
+  colorMode: "ink" | "yarn" | "type" | "rows";   // SYM-FR-4.3, 4.4
 }
 
 interface SymbolScene {
   dimension: 2 | 3;
   unit: number;
   glyphs: PlacedGlyph[];        // one per drawn stitch, in working order; the ring is one too
+  rowLabels: { row: number; at: Vec3; out: Vec3 }[];   // a unit before each row's first stitch
+  yarnPath: Vec3[][];           // tops in working order, broken where no yarn edge joins them
+  surface?: Surface;            // 3D only (§5.4)
   bounds: { min: Vec3; max: Vec3 };
 }
 
@@ -277,9 +281,9 @@ Slip-stitch dots are an `InstancedMesh` of flat discs (`CircleGeometry`, 12 segm
 
 ### 5.4 3D
 
-- Each glyph is offset along its `out` by 0.15 × `unit`, so it sits on top of the fabric, not inside it.
-- **Surface** (SYM-FR-3.8, on by default): a mesh triangulated from the stitch graph (each stitch's top, its feet and its row neighbours), drawn in a faint shade of the background colour with polygon offset, so the 3D shape reads and the far side's symbols are hidden behind it. Its normals come from the frames' `out` (§3.4). A checkbox turns it off.
-- **Far-side fading**, used when the surface is off: in the line shader (an `onBeforeCompile` patch of `LineMaterial`), a per-vertex `out` attribute is compared with the view direction; symbols facing away are drawn at 25% opacity. Depth test stays on, depth write off for faded segments, so near symbols are never hidden by far ones.
+- Each glyph, row label and yarn-path point is offset along its `out` by 0.15 × `unit` (`drawPlacement`'s `lift`), so it sits on top of the fabric, not inside it.
+- **Surface** (SYM-FR-3.8, on by default; core `surface.ts`): for each stitch, a fan from its top over its feet (a decrease) and a quad to the stitch before it in the same row (its last foot, this stitch's first foot, both tops). Feet are the raw foot nodes, so round 1 closes on the ring's centre. Triangles with an edge over 3 units are dropped (row ends, turns); each is wound to face its stitch's `out`. Drawn opaque and lit (`MeshStandardMaterial`, both sides) in the viewport's `--card` colour with polygon offset, so the 3D shape reads and the far side is hidden. A checkbox turns it off.
+- **Far-side fading**, used when the surface is off: no shader patch. `paint()` blends each glyph whose `out` faces away from the camera 75% toward `--card`, and `ModelView` repaints on every camera move while the layer says it `followsCamera`. Recolouring a few thousand glyphs per frame is cheap, and it needs no transparency or depth-write tricks. The yarn path is not faded.
 
 ### 5.5 Picking
 
@@ -302,12 +306,12 @@ Hover, base and selection colours are the existing `HOVER_COLOR`, `BASE_COLOR` a
 
 - A **View** select (Structure, Symbols) before the Dimension select. The choice is saved **per dimension** in `localStorage` under `view.mode` (`{"2": "symbols", "3": "structure"}`), read and written in a `try`. A dimension with no saved choice gets the default: symbols for 2D, structure for 3D (SYM-FR-1.4). Saving per dimension keeps both rules: a user who turns symbols off for a flat piece still gets the 3D default, and the other way round.
 - The **Colour** select gains *Ink* in symbol mode (*Alternate rows* in S2). Each mode keeps its own colour for the session: symbols start on *Ink*, structure on *Yarn colour*.
-- A **Symbols** menu (a small popover) with: yarn path, row numbers, and in 3D, surface (on by default).
+- A **Show** menu (a `<details>` popover, symbol mode only) with: surface (3D only, on by default), row numbers, yarn path. These last for the session.
 - **Export**: "PNG" always; "SVG chart" in symbol mode on a 2D layout.
 
 ### 6.2 Row numbers
 
-`rowLabels` (§4.5) put each row's number next to its first drawn stitch, offset by 0.6 × `unit` against `along`. When the row ↔ English mapping exists (main SPEC §9, "Row ↔ stitch"), the label is the English row label (`Rnd 3`); otherwise CrochetPARADE's row number plus one. In the view they are HTML elements positioned by projecting each anchor every render, hidden when behind the model, so they stay crisp at any zoom. In the SVG export they are `<text>`.
+`rowLabels` (§4.5) put each row's number one `unit` before its first drawn stitch, against `along`; the ring gets none. The text comes from `parserRowLabel()` (app `pattern.ts`): the English label when the row ↔ English mapping exists (main SPEC §9, "Row ↔ stitch"), numbered inside a range ("Rnds 5-8" gives Rnd 5 to Rnd 8); otherwise, and for unlabelled rows, CrochetPARADE's row number plus one. In the view they are HTML elements in a `.row-labels` layer over the canvas, placed by projecting each anchor after every render and hidden when the anchor faces away from the camera (a cheap stand-in for occlusion that matches the far-side test), so they stay crisp at any zoom. In the SVG export they are `<text>`.
 
 ### 6.3 Legend
 
@@ -346,6 +350,8 @@ Unit tests in `packages/core/test/symbols.test.ts`, all in Node with the vendore
 - **Ring rule** (§3.2) on every bundled example with a magic ring (`textEarth` left out: its parse takes 2 s and slows the conformance run beside it): no leg is marked `onRing` unless its row has a stitch worked into a `ring`, and every stitch worked straight into a ring is.
 - **Glyphs:** every built-in in `builtinStitches()` (core `nodeParser.ts`) maps to a glyph or to the fallback, and only the S3 types to the fallback; this test fails when a vendor upgrade adds a stitch type. Until ISSUE-003 is fixed, `scbl` and `scfl` (and `fpdc` and `bpdc`) give the same strokes; the test asserts this so the fix has to change it on purpose.
 - **Scene:** for a fixed graph and positions, a stretched `dc` keeps its bar width and slash angle (§4.1); `bounds` contains every point; a 2D scene has `z = 0` everywhere.
+- **3D:** on the ball, at least 97% of frames face away from the centre and of surface triangles face out; on a turned swatch laid out in 3D every stitch's `out` agrees with the stitches it is worked into; glyphs are lifted 0.15 units along `out`; 2D scenes have no surface.
+- **Overlays:** one row label per row; *Alternate rows* gives `row1`, `row0`, `row1`; the yarn path runs through every stitch of one piece and breaks at `start_anew`.
 - **Composite names:** the samples' legends list `sc2inc` and `sc2tog` with the counts the pattern states.
 - **SVG** (S3): the granny square sample's SVG parses as XML, has one `<g class="sym …">` per drawn stitch, and matches a stored snapshot.
 
@@ -358,7 +364,7 @@ As REQUIREMENTS §9, with the files each touches.
 | Milestone | Files | Exit check |
 | --- | --- | --- |
 | **S1 2D chart** (built) | `legs.ts`, `frames.ts` (2D), `glyphs.ts` (all but S3 types), `draw.ts`, `scene.ts`, `legend.ts`; `modelView.ts` with structure and symbol layers; View select, colour modes, legend | Unit tests (§9) pass; granny square and swatch match a published chart (crocheter check pending) |
-| **S2 3D** | `frames.ts` (3D, sign propagation), surface, far-side fading, row labels, yarn path | Ball sample: the round where increases stop is findable in symbol mode |
+| **S2 3D** (built) | `frames.ts` (`orientFrames`), `surface.ts`, lift, far-side fading, *Alternate rows*, row labels, yarn path, Show menu | Ball sample: the round where increases stop is findable in symbol mode (checked by selecting Rnd 4 with *Alternate rows* on; crocheter check pending) |
 | **S3 Export and more** | `svg.ts`, PNG snapshot, puff, bobble and popcorn glyphs, harness and eval/datasets pages | Symbol recognition test passes; SVG opens in Inkscape with one group per symbol |
 
 ## 11. Open questions

@@ -100,3 +100,18 @@ export function rowLabel(row: PatternRow): string {
   if (row.label) return row.label;
   return row.text.length > 18 ? `${row.text.slice(0, 16)}…` : row.text;
 }
+
+/**
+ * The English label of a parser row, for row numbers on the model: "Rnd 3",
+ * or for a range, the row's own number in it ("Rnds 5-8" gives Rnd 5 to Rnd 8).
+ * Unlabelled rows and rows the mapping does not know get the parser row + 1.
+ */
+export function parserRowLabel(row: number, owners: string[] | undefined, rows: PatternRow[]): string {
+  const id = owners?.[row];
+  const english = id ? rows.find((r) => r.id === id) : undefined;
+  if (!english?.label) return String(row + 1);
+  const range = /^(.*?)s?\s*(\d+)\s*[-–]\s*\d+\s*$/i.exec(english.label);
+  if (!range) return english.label;
+  const first = owners!.indexOf(id!);
+  return `${range[1]!.trim()} ${Number(range[2]) + row - first}`;
+}

@@ -65,6 +65,7 @@ export {
 export { ukToUs } from "./ukTerms.ts";
 export { countMatches, lastRowCount, type CountCheck } from "./counts.ts";
 export { buildSymbolScene, type PlacedGlyph, type SymbolColorMode, type SymbolOptions, type SymbolScene } from "./symbols/scene.ts";
+export type { Surface } from "./symbols/surface.ts";
 export { legendEntries, legendIcon, stitchName, type LegendEntry, type LegendIcon } from "./symbols/legend.ts";
 export { baseType, typeParts, type BaseStitch, type TypeParts } from "./symbols/stitchTypes.ts";
 export type { Vec3 } from "./symbols/vec.ts";

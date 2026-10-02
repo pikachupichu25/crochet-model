@@ -1,6 +1,6 @@
 import { segmentPattern, type RowTranslation } from "@crochet-model/core";
 import { describe, expect, it } from "vitest";
-import { assemble, exportText, guessDimension, parserRowOwners, summarise, type Translations } from "../src/pattern.ts";
+import { assemble, exportText, guessDimension, parserRowLabel, parserRowOwners, summarise, type Translations } from "../src/pattern.ts";
 import { SAMPLES } from "../src/samples.ts";
 
 const t = (rowId: string, cp: string, extra: Partial<RowTranslation> = {}): RowTranslation => ({
@@ -25,6 +25,14 @@ describe("pattern helpers", () => {
     expect(owners[1]).toBe(rows[0]!.id); // Rnd 1
     expect(owners.filter((o) => o === rows[4]!.id)).toHaveLength(4); // Rnds 5-8
     expect(parserRowOwners(parts, 99)).toBeUndefined();
+  });
+
+  it("labels parser rows with their English row, numbering inside a range", () => {
+    const { rows, translations } = sample("ball");
+    const { parts } = assemble(rows, translations);
+    const owners = parserRowOwners(parts, 12)!;
+    expect([1, 2, 5, 6, 8, 9].map((r) => parserRowLabel(r, owners, rows))).toEqual(["Rnd 1", "Rnd 2", "Rnd 5", "Rnd 6", "Rnd 8", "Rnd 9"]);
+    expect(parserRowLabel(3, undefined, rows)).toBe("4");
   });
 
   it("exports the English as comments above each row", () => {

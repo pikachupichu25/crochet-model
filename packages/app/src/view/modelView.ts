@@ -7,7 +7,7 @@
 import type { LayoutResult, LegendEntry, Stitch, StitchGraph } from "@crochet-model/core";
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import type { Layer, ViewOptions } from "./layer.ts";
+import type { Layer, RowAnchor, ViewOptions } from "./layer.ts";
 import { StructureLayer } from "./structureLayer.ts";
 import { SymbolLayer } from "./symbolLayer.ts";
 
@@ -33,11 +33,15 @@ export class ModelView {
 
   private graph: StitchGraph | undefined;
   private layout: LayoutResult | undefined;
-  private options: ViewOptions = { mode: "structure", colorMode: "yarn", showInternal: false };
+  private options: ViewOptions = { mode: "structure", colorMode: "yarn", showInternal: false, surface: true, yarnPath: false, rowNumbers: false };
   private layer: Layer | undefined;
   private hovered: HoverInfo | undefined;
   private selected = new Set<string>();
   private highlightKey: string | undefined;
+  /** Row numbers over the canvas, placed after each render. */
+  private readonly labelLayer = document.createElement("div");
+  private labels: { anchor: RowAnchor; el: HTMLElement }[] = [];
+  private rowLabel: (row: number) => string = (row) => String(row + 1);
 
   onHover: ((info: HoverInfo | undefined) => void) | undefined;
   /** A click on a stitch, or on empty space (undefined). Drags that orbit are not clicks. */
@@ -61,7 +65,10 @@ export class ModelView {
     this.scene.add(this.camera, this.model);
 
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
-    this.controls.addEventListener("change", () => this.requestRender());
+    // A layer that fades by facing repaints as the camera moves.
+    this.controls.addEventListener("change", () => (this.layer?.followsCamera ? this.paint() : this.requestRender()));
+    this.labelLayer.className = "row-labels";
+    container.append(this.labelLayer);
 
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(container);
@@ -101,6 +108,12 @@ export class ModelView {
     this.paint();
   }
 
+  /** The text of each row number: the English label when the app knows it. */
+  setRowLabel(text: (row: number) => string): void {
+    this.rowLabel = text;
+    for (const { anchor, el } of this.labels) el.textContent = text(anchor.row);
+  }
+
   /** Frames the selected stitches, or the whole model when none are shown. */
   focusSelection(): void {
     if (!this.layout) return;
@@ -123,6 +136,7 @@ export class ModelView {
     this.controls.dispose();
     this.renderer.dispose();
     this.renderer.domElement.remove();
+    this.labelLayer.remove();
   }
 
   clear(): void {
@@ -169,7 +183,30 @@ export class ModelView {
     this.layer = layer;
     const { clientWidth: w, clientHeight: h } = this.container;
     layer.resize?.(w, h);
+    if (this.options.rowNumbers && layer.rowAnchors) {
+      this.labels = layer.rowAnchors().map((anchor) => {
+        const el = document.createElement("span");
+        el.textContent = this.rowLabel(anchor.row);
+        this.labelLayer.append(el);
+        return { anchor, el };
+      });
+    }
     this.paint();
+  }
+
+  /** Puts each row number over its anchor; hides those behind the camera or facing away. */
+  private placeLabels(): void {
+    if (!this.labels.length) return;
+    const { clientWidth: w, clientHeight: h } = this.container;
+    const p = new THREE.Vector3();
+    const toEye = new THREE.Vector3();
+    for (const { anchor, el } of this.labels) {
+      p.copy(anchor.at).project(this.camera);
+      const facing = anchor.out.dot(toEye.subVectors(this.camera.position, anchor.at)) > 0;
+      const shown = facing && p.z < 1 && Math.abs(p.x) <= 1 && Math.abs(p.y) <= 1;
+      el.hidden = !shown;
+      if (shown) el.style.transform = `translate(${((p.x + 1) / 2) * w}px, ${((1 - p.y) / 2) * h}px) translate(-50%, -50%)`;
+    }
   }
 
   private stitchAt(event: PointerEvent): Stitch | undefined {
@@ -203,6 +240,7 @@ export class ModelView {
       bases: new Set(hover?.workedInto ?? []),
       selected: this.selected,
       highlightKey: this.highlightKey,
+      eye: this.camera.position,
     });
     this.requestRender();
   }
@@ -216,6 +254,8 @@ export class ModelView {
       this.model.remove(mesh);
     }
     this.layer = undefined;
+    this.labelLayer.replaceChildren();
+    this.labels = [];
   }
 
   private resize(): void {
@@ -233,7 +273,9 @@ export class ModelView {
     this.framePending = true;
     requestAnimationFrame(() => {
       this.framePending = false;
-      if (!this.disposed) this.renderer.render(this.scene, this.camera);
+      if (this.disposed) return;
+      this.renderer.render(this.scene, this.camera);
+      this.placeLabels();
     });
   }
 }

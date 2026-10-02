@@ -5,7 +5,7 @@
 import { applyObjectTransforms, readObjectTransforms, type Dimension, type LegendEntry, type Stitch } from "@crochet-model/core";
 import { useEffect, useRef, useState } from "react";
 import { layoutClient, setDimension, useCheck } from "../check.ts";
-import { guessDimension, rowLabel, summarise } from "../pattern.ts";
+import { guessDimension, parserRowLabel, rowLabel, summarise } from "../pattern.ts";
 import { selectRow, useApp } from "../store.ts";
 import { ModelView, type ColorMode, type ViewMode } from "../view/modelView.ts";
 import { LayoutCancelled } from "../workers/clients.ts";
@@ -55,6 +55,8 @@ export function ModelPanel() {
   // Each mode keeps its own colour: symbols default to ink (SYM-FR-4.3).
   const [colors, setColors] = useState<Record<ViewMode, ColorMode>>({ structure: "yarn", symbols: "ink" });
   const [legend, setLegend] = useState<LegendEntry[]>();
+  // Symbol overlays (SYM-FR-3.8, 4.6): the 3D surface is on by default.
+  const [overlays, setOverlays] = useState({ surface: true, yarnPath: false, rowNumbers: false });
   const [progress, setProgress] = useState<Progress>();
   const [info, setInfo] = useState<string>();
   const [laidOut, setLaidOut] = useState<string>();
@@ -124,7 +126,9 @@ export function ModelPanel() {
     setModes(next);
     writeModes(next);
   };
-  useEffect(() => view.current?.setOptions({ mode, colorMode }), [mode, colorMode]);
+  useEffect(() => view.current?.setOptions({ mode, colorMode, ...overlays }), [mode, colorMode, overlays]);
+  // Row numbers read as the English labels when the mapping is known.
+  useEffect(() => view.current?.setRowLabel((row) => parserRowLabel(row, owners, rows)), [owners, rows]);
 
   const auto = guessDimension(rows, translations);
   const hoverRow = hover && owners ? rows.find((r) => r.id === owners[hover.stitch.row]) : undefined;
@@ -157,9 +161,29 @@ export function ModelPanel() {
           </select>
           <select aria-label="Colour" value={colorMode} onChange={(e) => setColors({ ...colors, [mode]: e.target.value as ColorMode })}>
             {mode === "symbols" && <option value="ink">Ink</option>}
+            {mode === "symbols" && <option value="rows">Alternate rows</option>}
             <option value="yarn">Yarn colour</option>
             <option value="type">By stitch</option>
           </select>
+          {mode === "symbols" && (
+            <details className="symbol-menu">
+              <summary className="button small">Show</summary>
+              <div className="symbol-menu-body">
+                <label className={dimension === 3 ? "" : "disabled"} title="A shaded surface under the symbols; with it off, the far side fades">
+                  <input type="checkbox" checked={overlays.surface} disabled={dimension !== 3} onChange={(e) => setOverlays({ ...overlays, surface: e.target.checked })} />
+                  Surface (3D)
+                </label>
+                <label>
+                  <input type="checkbox" checked={overlays.rowNumbers} onChange={(e) => setOverlays({ ...overlays, rowNumbers: e.target.checked })} />
+                  Row numbers
+                </label>
+                <label>
+                  <input type="checkbox" checked={overlays.yarnPath} onChange={(e) => setOverlays({ ...overlays, yarnPath: e.target.checked })} />
+                  Yarn path
+                </label>
+              </div>
+            </details>
+          )}
           <button
             className="button small"
             title="Lay out again from another seed: try this when a 3D piece comes out inside-out"

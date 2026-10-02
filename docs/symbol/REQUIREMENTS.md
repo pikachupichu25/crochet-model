@@ -1,6 +1,6 @@
 # Symbol Mode: Requirements
 
-> Status: S1 (2D chart) built; S2 and S3 not started  
+> Status: S1 (2D chart) and S2 (3D) built; S3 not started  
 > Last updated: 2026-10-02  
 > Purpose: add a view mode that draws the laid-out model with standard crochet chart symbols, one symbol per stitch, instead of spheres at nodes and cylinders along edges.
 

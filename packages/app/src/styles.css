@@ -7,6 +7,7 @@
   --paper-2: #efe7d8;
   --card: #fbf8f1;
   --ink: #2a2420;
+  --ink-alt: #2f63a8;
   --muted: #6e655b;
   --faint: #a89e91;
   --line: #ddd2c0;
@@ -39,6 +40,7 @@
     --paper-2: #24201c;
     --card: #221e1a;
     --ink: #ece4d8;
+    --ink-alt: #8fb6ee;
     --muted: #aa9f91;
     --faint: #776d61;
     --line: #3a332c;
@@ -298,6 +300,15 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px s
 .symbol-legend code { font: 11px var(--mono); color: var(--faint); }
 .symbol-legend .count { font-variant-numeric: tabular-nums; color: var(--ink); }
 .symbol-legend-head { font: 600 11px var(--sans); letter-spacing: 0.08em; text-transform: uppercase; color: var(--warn); }
+.row-labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.row-labels span { position: absolute; left: 0; top: 0; padding: 0 4px; border-radius: 4px; background: var(--card); color: var(--muted); font: 600 11px var(--sans); white-space: nowrap; opacity: 0.9; }
+.symbol-menu { position: relative; }
+.symbol-menu summary { list-style: none; cursor: pointer; }
+.symbol-menu summary::-webkit-details-marker { display: none; }
+.symbol-menu[open] .symbol-menu-body { display: flex; }
+.symbol-menu-body { display: none; position: absolute; right: 0; top: calc(100% + 6px); z-index: 5; flex-direction: column; gap: 6px; padding: 10px 12px; min-width: 180px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); font-size: 13px; }
+.symbol-menu-body label { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+.symbol-menu-body label.disabled { color: var(--faint); }
 .symbol-icon { width: 22px; height: 22px; flex: none; color: var(--ink); }
 
 /* --- Dialogs ------------------------------------------------------------------ */

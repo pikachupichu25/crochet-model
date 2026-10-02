@@ -7,7 +7,7 @@ import { glyphFor } from "../src/symbols/glyphs.ts";
 import { legendEntries, legendIcon, stitchName } from "../src/symbols/legend.ts";
 import { placeStitches, UNDRAWN_TYPES } from "../src/symbols/legs.ts";
 import { buildSymbolScene } from "../src/symbols/scene.ts";
-import { distance } from "../src/symbols/vec.ts";
+import { cross, distance, dot, mean, sub } from "../src/symbols/vec.ts";
 
 const { validate } = createNodeValidator();
 let solver: Solver;
@@ -196,5 +196,74 @@ describe("legend", () => {
       expect(icon.box[2]).toBeGreaterThan(icon.box[0]);
       expect(icon.box[3]).toBeGreaterThan(icon.box[1]);
     }
+  });
+});
+
+describe("3D", () => {
+  const rep = (line: string, n: number) => Array.from({ length: n }, () => line).join("\n");
+  const BALL = `ring.R\n6sc@R\n6*sc2inc\n6*[sc,sc2inc]\n6*[2sc,sc2inc]\n${rep("24sc", 4)}\n6*[2sc,sc2tog]\n6*[sc,sc2tog]\n6*sc2tog`;
+
+  it("turns every frame of a ball outwards", () => {
+    const { graph, positions } = laidOut(BALL, 3);
+    const placed = placeStitches(graph, positions, 1, 3);
+    const centre = mean(placed.map((p) => p.top));
+    const outward = placed.filter((p) => dot(p.frame.out, sub(p.top, centre)) > 0);
+    expect(outward.length / placed.length).toBeGreaterThan(0.97);
+  });
+
+  it("makes frames agree across turned rows", () => {
+    const { graph, positions } = laidOut(`16ch,turn\nsk,15sc,turn\n${rep("ch,15sc,turn", 8)}`, 3);
+    const placed = placeStitches(graph, positions, 1, 3);
+    const byId = new Map(placed.map((p) => [p.stitch.id, p]));
+    const pairs = placed.flatMap((p) => p.legs.map((l) => byId.get(l.footNode)).filter((q) => q !== undefined).map((q) => [p, q] as const));
+    expect(pairs.length).toBeGreaterThan(100);
+    for (const [p, q] of pairs) expect(dot(p.frame.out, q.frame.out)).toBeGreaterThan(0);
+  });
+
+  it("lifts symbols off the fabric along out", () => {
+    const { graph, positions } = laidOut(BALL, 3);
+    const scene = buildSymbolScene(graph, positions, 3, { colorMode: "ink" });
+    const ss = graph.stitches.find((s) => s.row === 3)!;
+    const glyph = scene.glyphs.find((g) => g.stitchId === ss.id)!;
+    // The hit quad's centre is the top moved along out by the lift.
+    const centre = mean(glyph.hit);
+    const top = positions[ss.id]! as [number, number, number];
+    expect(dot(sub(centre, top), glyph.out)).toBeCloseTo(0.15 * scene.unit, 6);
+  });
+
+  it("builds a surface whose triangles face out", () => {
+    const { graph, positions } = laidOut(BALL, 3);
+    const scene = buildSymbolScene(graph, positions, 3, { colorMode: "ink" });
+    const { vertices, triangles } = scene.surface!;
+    expect(triangles.length / 3).toBeGreaterThan(graph.stitches.length);
+    const centre = mean(vertices);
+    let outward = 0;
+    for (let t = 0; t < triangles.length; t += 3) {
+      const [a, b, c] = [vertices[triangles[t]!]!, vertices[triangles[t + 1]!]!, vertices[triangles[t + 2]!]!];
+      if (dot(cross(sub(b, a), sub(c, a)), sub(mean([a, b, c]), centre)) > 0) outward++;
+    }
+    expect(outward / (triangles.length / 3)).toBeGreaterThan(0.97);
+  });
+
+  it("has no surface in 2D", () => {
+    const { graph, positions } = laidOut("4ch,turn\nsk,3sc");
+    expect(buildSymbolScene(graph, positions, 2, { colorMode: "ink" }).surface).toBeUndefined();
+  });
+});
+
+describe("overlays", () => {
+  it("labels each row once, and alternates row colours", () => {
+    const { graph, positions } = laidOut("ring\n6sc\n6*sc2inc\n6*[sc,sc2inc]", 2);
+    const scene = buildSymbolScene(graph, positions, 2, { colorMode: "rows" });
+    expect(scene.rowLabels.map((l) => l.row)).toEqual([1, 2, 3]);
+    const keyOf = (row: number) => scene.glyphs.find((g) => graph.stitches.find((s) => s.id === g.stitchId)!.row === row)!.colorKey;
+    expect([keyOf(1), keyOf(2), keyOf(3)]).toEqual(["row1", "row0", "row1"]);
+  });
+
+  it("follows the yarn through every stitch of one piece, and breaks between pieces", () => {
+    const one = laidOut("4ch,turn\nsk,3sc");
+    expect(buildSymbolScene(one.graph, one.positions, 2, { colorMode: "ink" }).yarnPath.map((r) => r.length)).toEqual([7]);
+    const two = laidOut("4ch\nstart_anew\n3ch", 3);
+    expect(buildSymbolScene(two.graph, two.positions, 3, { colorMode: "ink" }).yarnPath.map((r) => r.length)).toEqual([4, 3]);
   });
 });

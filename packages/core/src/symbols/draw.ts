@@ -20,8 +20,11 @@ export interface Drawn {
   fallback: boolean;
 }
 
-/** Also draws the legend's icons (legend.ts). */
-export function drawPlacement(p: StitchPlacement, unit: number): Drawn {
+/**
+ * `lift` moves the glyph off the fabric along its `out`, so in 3D it sits on
+ * the surface rather than in it. Also draws the legend's icons (legend.ts).
+ */
+export function drawPlacement(p: StitchPlacement, unit: number, lift = 0): Drawn {
   const glyph = glyphFor(p.stitch.type, p.stitch.side);
   const { frame, top } = p;
   const lines: Vec3[][] = [];
@@ -39,7 +42,19 @@ export function drawPlacement(p: StitchPlacement, unit: number): Drawn {
   if (glyph.ring) lines.push(strokePoints({ kind: "ellipse", center: [0, 0], rx: glyph.ring, ry: glyph.ring }, () => top, (_, du, dv) => atTop(du, dv)));
 
   const dots = glyph.dots.map(([u, v, r]) => ({ at: atTop(u, v), radius: r * unit }));
-  return { lines, dots, hit: hitQuad(lines, dots, top, frame, unit), out: frame.out, fallback: !!glyph.fallback };
+  const hit = hitQuad(lines, dots, top, frame, unit);
+  if (lift) {
+    const up = scale(frame.out, lift);
+    const move = (q: Vec3) => add(q, up);
+    return {
+      lines: lines.map((l) => l.map(move)),
+      dots: dots.map((d) => ({ ...d, at: move(d.at) })),
+      hit: hit.map(move) as Drawn["hit"],
+      out: frame.out,
+      fallback: !!glyph.fallback,
+    };
+  }
+  return { lines, dots, hit, out: frame.out, fallback: !!glyph.fallback };
 }
 
 /** Round 1 stands on the ring circle, not its centre. */

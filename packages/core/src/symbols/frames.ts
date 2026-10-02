@@ -1,9 +1,9 @@
 // A frame for each stitch (docs/symbol/SPEC.md §3.4): up from its feet to its
 // top, along the row, out of the fabric, and across (in the fabric, at right
-// angles to up). 3D frames are not yet made consistent across the fabric;
-// that is S2.
+// angles to up). In 3D, orientFrames() then makes `out` agree across the
+// fabric.
 
-import { cross, mean, normalize, perpendicular, reject, sub, type Vec3 } from "./vec.ts";
+import { cross, dot, mean, normalize, perpendicular, reject, scale, sub, type Vec3 } from "./vec.ts";
 
 export interface Frame {
   up: Vec3;
@@ -42,4 +42,42 @@ export function frameFor(top: Vec3, feet: Vec3[], prev: Vec3 | undefined, next: 
 /** A unit vector in the fabric at right angles to `dir`, for the width of a symbol along a leg. */
 export function acrossOf(dir: Vec3, frame: Frame): Vec3 {
   return normalize(cross(frame.out, dir)) ?? frame.across;
+}
+
+/**
+ * Makes 3D frames face one way across the fabric (SPEC §3.4). `out` comes
+ * from the row direction, so it flips on every turned row; this walks the
+ * fabric from the first stitch over `neighbours` (the stitches each is worked
+ * into, and the ones before and after it) and flips any frame that disagrees
+ * with the frames already set around it. Then the whole fabric is turned so
+ * `out` points away from its centre, which is the outside of a closed shape.
+ * `across` flips with `out`, so symbols are not mirrored.
+ */
+export function orientFrames(frames: Frame[], tops: Vec3[], neighbours: number[][]): void {
+  const n = frames.length;
+  const done = new Array<boolean>(n).fill(false);
+  const flipFrame = (i: number) => {
+    const f = frames[i]!;
+    frames[i] = { ...f, out: scale(f.out, -1), across: scale(f.across, -1) };
+  };
+  for (let start = 0; start < n; start++) {
+    if (done[start]) continue;
+    done[start] = true;
+    const queue = [start];
+    while (queue.length) {
+      const i = queue.shift()!;
+      for (const j of neighbours[i]!) {
+        if (done[j]) continue;
+        // Agree with every already-set neighbour, weighted by how sure each is.
+        let vote = 0;
+        for (const k of neighbours[j]!) if (done[k]) vote += dot(frames[j]!.out, frames[k]!.out);
+        if (vote < 0) flipFrame(j);
+        done[j] = true;
+        queue.push(j);
+      }
+    }
+  }
+  const centre = mean(tops);
+  const outward = frames.reduce((sum, f, i) => sum + dot(f.out, sub(tops[i]!, centre)), 0);
+  if (outward < 0) for (let i = 0; i < n; i++) flipFrame(i);
 }

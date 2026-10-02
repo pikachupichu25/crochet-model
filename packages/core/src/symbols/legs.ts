@@ -2,7 +2,7 @@
 // points it is worked into up to its own top node, and a frame to draw in.
 
 import type { Stitch, StitchGraph } from "../cp/graph.ts";
-import { frameFor, type Frame } from "./frames.ts";
+import { frameFor, orientFrames, type Frame } from "./frames.ts";
 import { distance, mean, normalize, scale, add, sub, vec, type Vec3 } from "./vec.ts";
 
 export interface Leg {
@@ -103,7 +103,24 @@ export function placeStitches(
     }
     placements.push({ stitch, legs, top, frame });
   }
+  if (dimension === 3) orient(placements, graph);
   return placements;
+}
+
+/** Neighbours are the stitches joined by yarn or worked into: within one piece only. */
+function orient(placements: StitchPlacement[], graph: StitchGraph): void {
+  const index = new Map(placements.map((p, i) => [p.stitch.id, i]));
+  const neighbours = placements.map(() => new Set<number>());
+  const join = (a: number | undefined, b: number | undefined) => {
+    if (a === undefined || b === undefined || a === b) return;
+    neighbours[a]!.add(b);
+    neighbours[b]!.add(a);
+  };
+  for (const e of graph.edges) if (e.kind === "yarn") join(index.get(e.tail), index.get(e.head));
+  placements.forEach((p, i) => p.legs.forEach((l) => join(i, index.get(l.footNode))));
+  const frames = placements.map((p) => p.frame);
+  orientFrames(frames, placements.map((p) => p.top), neighbours.map((n) => [...n]));
+  placements.forEach((p, i) => (p.frame = frames[i]!));
 }
 
 /** The median length of the yarn edges: the size symbols are drawn at. */
