@@ -127,7 +127,7 @@ const DEFAULT_MAX_TOKENS = 16_000;
 
 export function settingsOf(
   o: Pick<TranslateOptions, "modelName" | "effort" | "repairEffort" | "maxAttempts"> & { provider: string },
-  mode: "row" | "whole",
+  mode: "row" | "whole" | "document",
 ) {
   return {
     mode,
@@ -151,27 +151,27 @@ export function assemble(pattern: TranslatedPattern, options: { skipGiven?: bool
   );
 }
 
-function joinCp(parts: string[]): string {
+export function joinCp(parts: string[]): string {
   return parts.map((p) => p.trim()).filter((p) => p !== "").join("\n");
 }
 
-function addUsage(total: Usage, u: Usage) {
+export function addUsage(total: Usage, u: Usage) {
   total.inputTokens += u.inputTokens;
   total.outputTokens += u.outputTokens;
   total.cacheReadTokens += u.cacheReadTokens;
   total.cacheWriteTokens += u.cacheWriteTokens;
 }
 
-const zeroUsage = (): Usage => ({ inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 });
+export const zeroUsage = (): Usage => ({ inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 });
 
-function summary(result: ValidationResult): Attempt["validation"] {
+export function summary(result: ValidationResult): Attempt["validation"] {
   const { graphJson, simpleDot, ...rest } = result;
   void graphJson;
   void simpleDot;
   return rest;
 }
 
-const failed = (message: string): Attempt["validation"] => ({
+export const failed = (message: string): Attempt["validation"] => ({
   ok: false,
   rows: [],
   warnings: [],
@@ -703,11 +703,11 @@ class PatternTranslator {
 }
 
 /** A repair or follow-up message. */
-function userTurn(text: string): Turn {
+export function userTurn(text: string): Turn {
   return { role: "user", blocks: [{ text, cache: false }] };
 }
 
-function safeJson<T>(text: string, schema: { safeParse(v: unknown): { success: true; data: T } | { success: false; error: { message: string } } }):
+export function safeJson<T>(text: string, schema: { safeParse(v: unknown): { success: true; data: T } | { success: false; error: { message: string } } }):
   | { ok: true; value: T }
   | { ok: false; why: string } {
   let value: unknown;

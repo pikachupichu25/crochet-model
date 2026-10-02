@@ -38,6 +38,13 @@ export const WholeResponse = z.object({
 });
 export type WholeResponse = z.infer<typeof WholeResponse>;
 
+/** Document mode: the whole pattern as one CrochetPARADE text, with `# label` comments. */
+export const DocumentResponse = z.object({
+  cp: z.string(),
+  assumptions: z.array(z.string()),
+});
+export type DocumentResponse = z.infer<typeof DocumentResponse>;
+
 /**
  * The JSON schema for `output_config.format`. The SDK helper removes keywords
  * structured outputs do not support; its `parse` function is dropped so the

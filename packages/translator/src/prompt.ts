@@ -14,27 +14,42 @@ import { readFileSync } from "node:fs";
 import type { CountCheck, ParseError, PatternNote, PatternRow, Question } from "@crochet-model/core";
 import { builtinStitches } from "@crochet-model/core/node";
 import type { TextBlock } from "./model.ts";
-import { outputFormat, RowResponse, WholeResponse } from "./schema.ts";
+import { DocumentResponse, outputFormat, RowResponse, WholeResponse } from "./schema.ts";
 
 const read = (name: string) =>
   readFileSync(new URL(`./prompt/${name}`, import.meta.url), "utf8").trim();
 
 let systemText: string | undefined;
+let documentText: string | undefined;
 
-/** The system prompt, built once. The stitch list comes from the vendored parser. */
-export function systemPrompt(): string {
-  systemText ??= [
-    read("system.md"),
+/** The reference shared by every mode: grammar, stitch list, idioms, worked examples. */
+function reference(): string[] {
+  return [
     read("grammar.md"),
     `## Built-in stitch names\n\n${builtinStitches().join(" ")}\n\nAny of these with \`Ninc\` or \`Ntog\` appended (\`sc2inc\`, \`dc3tog\`) is also built in.`,
     read("idioms.md"),
     read("examples.md"),
-  ].join("\n\n");
+  ];
+}
+
+/** The system prompt, built once. The stitch list comes from the vendored parser. */
+export function systemPrompt(): string {
+  systemText ??= [read("system.md"), ...reference()].join("\n\n");
   return systemText;
 }
 
 export function systemBlocks(): TextBlock[] {
   return [{ text: systemPrompt(), cache: true }];
+}
+
+/** Document mode's system prompt: its own role and output rules, the same reference. */
+export function documentSystemPrompt(): string {
+  documentText ??= [read("document.md"), ...reference()].join("\n\n");
+  return documentText;
+}
+
+export function documentSystemBlocks(): TextBlock[] {
+  return [{ text: documentSystemPrompt(), cache: true }];
 }
 
 /**
@@ -47,6 +62,11 @@ export function promptVersion(settings: object): string {
   h.update(systemPrompt());
   h.update(JSON.stringify(outputFormat(RowResponse)));
   h.update(JSON.stringify(outputFormat(WholeResponse)));
+  // Only document mode reads these, so the other modes keep their versions.
+  if ((settings as { mode?: string }).mode === "document") {
+    h.update(documentSystemPrompt());
+    h.update(JSON.stringify(outputFormat(DocumentResponse)));
+  }
   h.update(JSON.stringify(settings));
   return h.digest("hex").slice(0, 12);
 }
@@ -137,6 +157,43 @@ export function wholeBlock(rows: PatternRow[], given: AcceptedRow[]): TextBlock 
       `${prefix}Translate every remaining row of the pattern in one response: ${ids}. ` +
       "Return one entry per row id, in order. Leave `cp` empty for a row that makes no stitches.",
   };
+}
+
+/**
+ * Document mode: the pattern as written. With an accepted prefix (the gold
+ * rows of a step item), only the remaining English is to be translated.
+ */
+export function documentBlock(english: string, accepted?: { english: string; cp: string }): TextBlock {
+  const text = accepted
+    ? `<accepted_english>\n${accepted.english}\n</accepted_english>\n\n` +
+      `<accepted_cp>\n${accepted.cp}\n</accepted_cp>\n\n` +
+      `<pattern>\n${english}\n</pattern>\n\n` +
+      "The accepted CrochetPARADE translates the accepted English. Translate the pattern that follows it, continuing from the accepted text; do not repeat it."
+    : `<pattern>\n${english}\n</pattern>\n\nTranslate the whole pattern.`;
+  return { text, cache: false };
+}
+
+/** Document mode: a parser error, with the line it points at. */
+export function documentParseRepair(error: ParseError, line?: string): string {
+  const where = error.row === undefined ? "" : ` at parser row ${error.row}`;
+  const quoted = line === undefined ? "" : `\n\nThe line: \`${line.trim()}\``;
+  return (
+    `The parser rejected the translation${where}:\n${error.message}${quoted}\n\n` +
+    `${error.kind === "label_not_found" ? LABEL_ADVICE : ADVICE[error.kind]}\n\nReturn the corrected response with the whole text.`
+  );
+}
+
+const LABEL_ADVICE =
+  "A label is used but not defined on an earlier stitch, or its index is wrong. Check the spelling and the index; remember that after a turn chain spaces come back in reverse order. If the space or stitch was made in an earlier row without a label, add the label there.";
+
+/** Document mode: the instructions whose last line does not make the stated count. */
+export function documentCountRepair(mismatches: string[]): string {
+  return (
+    `The translation parses, but these instructions do not make the count the English states:\n${mismatches.join("\n")}\n\n` +
+    "Check each one against the English: repeats, increases (`sc2inc` counts 2), stitches worked into the same place, skipped stitches, and the previous row's count. " +
+    "If you are sure the English counts differently from the parser (for example a chain it counts as a stitch), keep that row and say why in `assumptions`. " +
+    "Return the corrected response with the whole text."
+  );
 }
 
 const ADVICE: Record<ParseError["kind"], string> = {

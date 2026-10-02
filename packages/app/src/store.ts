@@ -17,6 +17,7 @@ import {
   type SavedKey,
   type SessionUser,
   type Settings,
+  type TranslateMode,
 } from "./api.ts";
 import type { Translations } from "./pattern.ts";
 import { SAMPLES } from "./samples.ts";
@@ -24,6 +25,7 @@ import { SAMPLES } from "./samples.ts";
 const PATTERN_KEY = "crochet-model:pattern";
 const SETTINGS_KEY = "crochet-model:settings";
 const CONFIRMED_KEY = "crochet-model:confirmed-providers";
+const MODE_KEY = "crochet-model:translate-mode";
 
 interface Saved {
   english: string;
@@ -47,6 +49,8 @@ export interface State {
   /** Rows being translated now, by id. */
   busyRows: Record<string, true>;
   translating: boolean;
+  /** How the running translation goes: whole-pattern rows all arrive at the end. */
+  translatingMode?: TranslateMode;
   lastRun?: Done;
   error?: string;
   /** The row highlighted in the review and the model. */
@@ -55,6 +59,8 @@ export interface State {
   provider: ProviderId;
   model: string | null;
   effort: Effort;
+  /** Kept in this browser only, for guests and signed-in users alike. */
+  mode: TranslateMode;
   cacheEnabled: boolean;
   /** Guest keys by provider: memory only. */
   keys: Partial<Record<ProviderId, string>>;
@@ -112,6 +118,7 @@ export const useApp = create<State>(() => ({
   provider: guestSettings?.provider ?? "anthropic",
   model: guestSettings?.model ?? "claude-opus-5-5",
   effort: guestSettings?.effort ?? "medium",
+  mode: read<TranslateMode>(MODE_KEY) === "document" ? "document" : "row",
   cacheEnabled: guestSettings?.cacheEnabled ?? true,
   keys: {},
   savedKeys: [],
@@ -129,6 +136,7 @@ useApp.subscribe((s, prev) => {
   if (!s.user && (s.provider !== prev.provider || s.model !== prev.model || s.effort !== prev.effort || s.cacheEnabled !== prev.cacheEnabled)) {
     write(SETTINGS_KEY, { provider: s.provider, model: s.model, effort: s.effort, cacheEnabled: s.cacheEnabled });
   }
+  if (s.mode !== prev.mode) write(MODE_KEY, s.mode);
 });
 
 // --- Pattern ---------------------------------------------------------------------
@@ -209,10 +217,14 @@ function edits(): Record<string, string> {
 function request() {
   const s = get();
   if (!s.model) throw new ApiError(400, "no_model");
-  return { english: s.english, answers: answers(), colors: s.colors, provider: s.provider, model: s.model, effort: s.effort, cache: s.cacheEnabled };
+  return { english: s.english, answers: answers(), colors: s.colors, provider: s.provider, model: s.model, effort: s.effort, cache: s.cacheEnabled, mode: s.mode };
 }
 
 let running: AbortController | undefined;
+
+export function setMode(mode: TranslateMode) {
+  set({ mode });
+}
 
 /** Translates every row that is not the user's own (FR-2.1, FR-3.3). */
 export async function translateAll(): Promise<void> {
@@ -220,7 +232,7 @@ export async function translateAll(): Promise<void> {
   running?.abort();
   const controller = (running = new AbortController());
   const keep = Object.fromEntries(Object.entries(s.translations).filter(([, t]) => t.source === "user"));
-  set({ translations: keep, translating: true, error: undefined, lastRun: undefined, sampleId: undefined, busyRows: Object.fromEntries(s.segmented.rows.filter((r) => !keep[r.id]).map((r) => [r.id, true])) });
+  set({ translations: keep, translating: true, translatingMode: s.mode, error: undefined, lastRun: undefined, sampleId: undefined, busyRows: Object.fromEntries(s.segmented.rows.filter((r) => !keep[r.id]).map((r) => [r.id, true])) });
   try {
     await translate({ ...request(), edits: edits() }, s.keys[s.provider], {
       onRow: (t) => {
@@ -236,13 +248,13 @@ export async function translateAll(): Promise<void> {
   } catch (error) {
     if (!controller.signal.aborted) failed(error);
   } finally {
-    if (running === controller) set({ translating: false, busyRows: {} });
+    if (running === controller) set({ translating: false, translatingMode: undefined, busyRows: {} });
   }
 }
 
 export function cancelTranslation() {
   running?.abort();
-  set({ translating: false, busyRows: {} });
+  set({ translating: false, translatingMode: undefined, busyRows: {} });
 }
 
 /** One row again: after an answer without code, or a rejected assumption (FR-2.6, FR-3.4). */
@@ -252,7 +264,7 @@ export async function retranslateRow(rowId: string, rejected: string[] = []): Pr
   const before = Object.fromEntries(s.segmented.rows.slice(0, index).flatMap((r) => (s.translations[r.id] ? [[r.id, s.translations[r.id]!]] : [])));
   set((st) => ({ busyRows: { ...st.busyRows, [rowId]: true }, error: undefined }));
   try {
-    await translateRow({ ...request(), rowId, translations: before, rejected }, s.keys[s.provider], {
+    await translateRow({ ...request(), mode: "row", rowId, translations: before, rejected }, s.keys[s.provider], {
       onRow: upsert,
       onDone: (d) => set({ lastRun: d }),
     });

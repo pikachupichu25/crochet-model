@@ -9,6 +9,9 @@ import {
   costOf,
   createModel,
   DEFAULT_MODELS,
+  DOCUMENT_ROW_ID,
+  documentRows,
+  estimateDocument,
   estimatePattern,
   listModels,
   ModelError,
@@ -16,11 +19,13 @@ import {
   promptVersion,
   PROVIDERS,
   settingsOf,
+  translateDocument,
   translatePattern,
   type AppProviderId,
   type Effort,
   type ModelInfo,
   type RowCache,
+  type TranslateResult,
   type TranslatorModel,
 } from "@crochet-model/translator";
 import { getConnInfo } from "@hono/node-server/conninfo";
@@ -71,6 +76,8 @@ const TranslateBody = z.object({
   effort: z.enum(EFFORTS).optional(),
   /** A guest's cache setting; signed-in users' comes from their settings. */
   cache: z.boolean().optional(),
+  /** `document`: the whole pattern in one request, split into rows afterwards. */
+  mode: z.enum(["row", "document"]).optional(),
 });
 
 const RowTranslationBody = z.object({
@@ -342,7 +349,8 @@ export function createApp(deps: AppDeps) {
     const { provider, model, effort } = choices(c, body.data);
     if (!model) return c.json({ error: "no_model", provider }, 400);
     const rows = segmentPattern(body.data.english).rows.length;
-    const estimate = estimatePattern(body.data.english, rows, effort, priceOf(provider, model, body.data.price ?? undefined));
+    const estimator = body.data.mode === "document" ? estimateDocument : estimatePattern;
+    const estimate = estimator(body.data.english, rows, effort, priceOf(provider, model, body.data.price ?? undefined));
     return c.json({ provider, model, rows, requests: estimate.requests, dollars: estimate.dollars ?? null });
   });
 
@@ -379,26 +387,41 @@ export function createApp(deps: AppDeps) {
     };
     if (key.saved && user) store.touchKey(user.id, provider);
 
+    // Re-translating one row is always row mode.
+    const document = body.mode === "document" && !extra.only;
+
     return streamSSE(c, async (stream) => {
       const aborted = new AbortController();
       stream.onAbort(() => aborted.abort());
+      const onRow = (t: RowTranslation) => void stream.writeSSE({ event: "row", data: JSON.stringify(t) });
+      const input = { english: body.english, rows: segmented.rows, notes: segmented.notes, colors: body.colors, fixed, rejected: extra.rejected };
+      const options = {
+        model: providers.createModel(provider, { apiKey: key.key }),
+        modelName: model,
+        effort,
+        repairEffort: effort === "low" || effort === "medium" ? ("high" as const) : effort,
+        validate,
+        idPrefix: "app",
+      };
       try {
-        const result = await translatePattern(
-          { english: body.english, rows: segmented.rows, notes: segmented.notes, colors: body.colors, fixed, rejected: extra.rejected },
-          {
-            model: providers.createModel(provider, { apiKey: key.key }),
-            modelName: model,
-            effort,
-            repairEffort: effort === "low" || effort === "medium" ? "high" : effort,
-            validate,
-            idPrefix: "app",
+        let result: TranslateResult;
+        if (document) {
+          // The user's edits replace the model's lines for their rows; the
+          // row cache holds rows from row mode only, so it is not used.
+          result = await translateDocument(input, { ...options, signal: aborted.signal });
+          const whole = result.pattern.translations[DOCUMENT_ROW_ID]!;
+          // As in row mode, the user's own rows are not sent back.
+          for (const t of documentRows(whole, segmented.rows, validate, fixed)) if (!fixed[t.rowId]) onRow(t);
+        } else {
+          result = await translatePattern(input, {
+            ...options,
             answer: ({ row }) => body.answers[row.id],
-            onRow: (t) => void stream.writeSSE({ event: "row", data: JSON.stringify(t) }),
+            onRow,
             only: extra.only,
             cache: rowCache,
             signal: aborted.signal,
-          },
-        );
+          });
+        }
         const price = priceOf(provider, model);
         const costUsd = result.costUsd ?? costOf(price, result.usage, false);
         await stream.writeSSE({

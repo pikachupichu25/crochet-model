@@ -6,6 +6,8 @@ import type { RowTranslation, Usage } from "@crochet-model/core";
 
 export type ProviderId = "anthropic" | "openrouter" | "gemini" | "openai";
 export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
+/** `row`: one request per row. `document`: the whole pattern in one request, split into rows by the server. */
+export type TranslateMode = "row" | "document";
 
 export const PROVIDER_NAMES: Record<ProviderId, string> = {
   anthropic: "Anthropic",
@@ -164,6 +166,7 @@ export interface TranslateRequest {
   model: string;
   effort?: Effort;
   cache?: boolean;
+  mode?: TranslateMode;
 }
 
 export interface TranslateRowRequest extends TranslateRequest {

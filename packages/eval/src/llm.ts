@@ -16,6 +16,7 @@ import {
   assemble,
   ModelError,
   systemPrompt,
+  documentSystemPrompt,
   type Effort,
   costOf,
   OUTPUT_TOKENS,
@@ -36,7 +37,7 @@ export interface LlmConfig {
   model: string;
   effort: Effort;
   repairEffort: Effort;
-  mode: "row" | "whole";
+  mode: "row" | "whole" | "document";
   repair: boolean;
   batch: boolean;
   concurrency: number;
@@ -195,7 +196,7 @@ export function estimateCost(
   config: LlmConfig,
   price: ModelInfo["price"],
 ): { dollars?: number; requests: number; detail: string } {
-  const systemTokens = systemPrompt().length / 3.5;
+  const systemTokens = (config.mode === "document" ? documentSystemPrompt() : systemPrompt()).length / 3.5;
   const usage: Usage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
   let requests = 0;
   const attempts = config.repair ? 1.5 : 1;
@@ -208,7 +209,7 @@ export function estimateCost(
     usage.cacheWriteTokens += patternTokens + systemTokens / Math.max(1, items.length);
     usage.cacheReadTokens += perPattern * (systemTokens + patternTokens);
     usage.inputTokens += perPattern * (300 + (input.english.length / 3.5) * 0.5);
-    usage.outputTokens += perPattern * OUTPUT_TOKENS[config.effort] * (config.mode === "whole" ? Math.max(1, todo / 2) : 1);
+    usage.outputTokens += perPattern * OUTPUT_TOKENS[config.effort] * (config.mode !== "row" ? Math.max(1, todo / 2) : 1);
   }
   const dollars = costOf(price, usage, config.batch);
   return {

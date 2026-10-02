@@ -31,6 +31,7 @@ function fakeProviders(seen: { keys: string[]; requests: ModelRequest[] }): Prov
         async send(request) {
           seen.requests.push(request);
           if (apiKey.startsWith("bad") || apiKey === REVOKED_KEY) throw new ModelError(provider, "key_rejected", `invalid x-api-key ${apiKey}`);
+          if (request.system[0]!.text.includes("whole translation in one piece")) return rowReply("# Rnd 1\nring.R\n6sc@R\n# Rnd 2\n6*sc2inc");
           return rowReply(request.messages.length === 1 && seen.requests.length % 2 === 1 ? "ring\n6sc" : "6*[sc2inc]");
         },
       };
@@ -205,6 +206,25 @@ describe("server", () => {
     expect(row.map(([e]) => e)).toEqual(["row", "done"]);
     const last = s.seen.requests.at(-1)!;
     expect(JSON.stringify(last.messages)).toContain("read as a flat circle");
+  });
+
+  it("translates the whole pattern in one request and streams it as rows", async () => {
+    const before = s.seen.requests.length;
+    const evs = await events(
+      await s.request("/api/translate", { method: "POST", headers: { "x-provider-key": GOOD_KEY }, body: JSON.stringify({ english: PATTERN, cache: false, mode: "document" }) }),
+    );
+    expect(s.seen.requests.length - before).toBe(1);
+    expect(evs.map(([e]) => e)).toEqual(["row", "row", "done"]);
+    expect(evs.slice(0, 2).map(([, t]) => [(t as { cp: string }).cp, (t as { status: string }).status])).toEqual([
+      ["ring.R\n6sc@R", "valid"],
+      ["6*sc2inc", "valid"],
+    ]);
+    expect((evs[2]![1] as { requests: number }).requests).toBe(1);
+  });
+
+  it("estimates a whole-pattern translation as about two requests", async () => {
+    const res = await s.request("/api/translate/estimate", { method: "POST", body: JSON.stringify({ english: PATTERN, mode: "document" }) });
+    expect(await res.json()).toMatchObject({ rows: 2, requests: 2 });
   });
 
   it("asks for a key when there is none", async () => {

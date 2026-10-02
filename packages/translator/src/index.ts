@@ -14,6 +14,7 @@ export {
   type RowCache,
   type TranslateResult,
 } from "./loop.ts";
+export { DOCUMENT_ROW_ID, documentRows, splitDocument, translateDocument } from "./document.ts";
 export {
   isFatal,
   kindOfStatus,
@@ -37,6 +38,6 @@ export { compatError, compatParams, CompatModel } from "./providers/openaiCompat
 export { GeminiModel, geminiError, geminiParams } from "./providers/gemini.ts";
 export { API_KEY_ENV, createModel, DEFAULT_MODELS, listModels, type ProviderOptions } from "./providers/index.ts";
 export { ClaudeCodeModel, claudeCodeStatus } from "./providers/claudeCode.ts";
-export { costOf, estimatePattern, OUTPUT_TOKENS, priceOf } from "./pricing.ts";
-export { promptVersion, systemPrompt } from "./prompt.ts";
-export { outputFormat, portableSchema, RowResponse, WholeResponse } from "./schema.ts";
+export { costOf, estimateDocument, estimatePattern, OUTPUT_TOKENS, priceOf } from "./pricing.ts";
+export { documentSystemPrompt, promptVersion, systemPrompt } from "./prompt.ts";
+export { DocumentResponse, outputFormat, portableSchema, RowResponse, WholeResponse } from "./schema.ts";

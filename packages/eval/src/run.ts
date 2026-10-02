@@ -5,7 +5,7 @@
 //     config.json     what ran: translator settings, prompt version, dataset
 //                     and CrochetPARADE commits
 //     run.log         every progress line printed during the run
-//     prompt.txt      the system prompt (LLM runs)
+//     prompt.txt      the system prompt (LLM runs; document mode's own in that mode)
 //     schema.json     the response schemas (LLM runs)
 //     requests.jsonl  every request and the whole reply, the provider's own
 //                     response included, or the error (LLM runs); without the
@@ -39,6 +39,9 @@ import {
   outputFormat,
   RowResponse,
   WholeResponse,
+  DocumentResponse,
+  documentSystemPrompt,
+  translateDocument,
   promptVersion,
   settingsOf,
   systemPrompt,
@@ -195,8 +198,12 @@ export async function runEvaluation(options: RunOptions): Promise<{ dir: string;
     if (!llm) {
       for (const item of items) done(runRules(item));
     } else {
-      writeFileSync(`${dir}prompt.txt`, systemPrompt());
-      const schemas = { row: outputFormat(RowResponse).schema, whole: outputFormat(WholeResponse).schema };
+      writeFileSync(`${dir}prompt.txt`, llm.mode === "document" ? documentSystemPrompt() : systemPrompt());
+      const schemas = {
+        row: outputFormat(RowResponse).schema,
+        whole: outputFormat(WholeResponse).schema,
+        document: outputFormat(DocumentResponse).schema,
+      };
       writeFileSync(`${dir}schema.json`, `${JSON.stringify(schemas, null, 2)}\n`);
       batches = batch?.batches;
       const model = new LoggingModel(batch ?? direct!, `${dir}requests.jsonl`);
@@ -297,10 +304,13 @@ async function runLlm(
     answer: goldAnswerer(goldRows, questions),
   };
   const todo = input.rows.filter((r) => input.given?.[r.id] === undefined);
+  const translate = { row: translatePattern, whole: translateWhole, document: translateDocument }[c.mode];
   try {
-    const result = await (c.mode === "row" ? translatePattern(input, options) : translateWhole(input, options));
+    const result = await translate(input, options);
     const text = outputOf(result.pattern);
-    const translations = todo.map((r) => result.pattern.translations[r.id]!).filter(Boolean);
+    // Document mode has one translation for everything not given.
+    const done = result.pattern.rows.filter((r) => input.given?.[r.id] === undefined);
+    const translations = done.map((r) => result.pattern.translations[r.id]!).filter(Boolean);
     const statuses: Record<string, number> = {};
     for (const t of translations) statuses[t.status] = (statuses[t.status] ?? 0) + 1;
     return {
@@ -308,7 +318,7 @@ async function runLlm(
       ms: Math.round(performance.now() - t0),
       outputs: { [output]: text },
       scores: { [output]: scoreItem(item, text) },
-      rows: { found: todo.length, kept: translations.filter((t) => t.status !== "invalid").length },
+      rows: { found: done.length, kept: translations.filter((t) => t.status !== "invalid").length },
       llm: {
         input,
         answers: result.pattern.answers,

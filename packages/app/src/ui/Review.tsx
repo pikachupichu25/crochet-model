@@ -26,6 +26,7 @@ export function Review({ onEditPattern }: { onEditPattern: () => void }) {
   const notes = useApp((s) => s.segmented.notes);
   const translations = useApp((s) => s.translations);
   const translating = useApp((s) => s.translating);
+  const translatingMode = useApp((s) => s.translatingMode);
   const busyRows = useApp((s) => s.busyRows);
   const lastRun = useApp((s) => s.lastRun);
   const error = useApp((s) => s.error);
@@ -51,10 +52,19 @@ export function Review({ onEditPattern }: { onEditPattern: () => void }) {
       <div className="summary" aria-live="polite">
         {translating ? (
           <>
-            <div className="progress" style={{ ["--done" as string]: `${(done / rows.length) * 100}%` }} />
-            <span>
-              Translating row {Math.min(done + 1, rows.length)} of {rows.length}…
-            </span>
+            {translatingMode === "document" ? (
+              <>
+                <div className="progress working" />
+                <span>Translating the whole pattern in one request; rows appear when it is done…</span>
+              </>
+            ) : (
+              <>
+                <div className="progress" style={{ ["--done" as string]: `${(done / rows.length) * 100}%` }} />
+                <span>
+                  Translating row {Math.min(done + 1, rows.length)} of {rows.length}…
+                </span>
+              </>
+            )}
             <button className="link" onClick={cancelTranslation}>
               Stop
             </button>

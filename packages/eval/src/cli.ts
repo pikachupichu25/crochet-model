@@ -4,7 +4,7 @@
 //   npm run eval -- run --translator rules --dataset all
 //   npm run eval -- run --translator llm --dataset stitchswitch \
 //       [--provider anthropic|openrouter|gemini|openai] [--model claude-opus-5-5] [--effort medium] [--repair-effort high] \
-//       [--mode row|whole] [--no-repair] [--batch] [--limit N] [--ids a,b] \
+//       [--mode row|whole|document] [--no-repair] [--batch] [--limit N] [--ids a,b] \
 //       [--concurrency 4] [--max-cost 5] [--yes]
 //   npm run eval -- report packages/eval/runs/<run> [more runs…]
 //   npm run eval -- compare packages/eval/runs/<a> packages/eval/runs/<b>
@@ -22,7 +22,7 @@ const USAGE = `usage:
   eval fetch
   eval run --translator rules|llm --dataset <${DATASETS.join("|")}|all> [--limit N] [--ids a,b]
            LLM: [--provider ${EVAL_PROVIDERS.join("|")}] [--model ID] [--effort low|medium|high|xhigh|max] [--repair-effort …]
-                [--mode row|whole] [--no-repair] [--batch] [--concurrency N] [--max-cost USD] [--yes]
+                [--mode row|whole|document] [--no-repair] [--batch] [--concurrency N] [--max-cost USD] [--yes]
   eval report <run-dir>...
   eval compare <run-dir-a> <run-dir-b>`;
 
@@ -92,7 +92,7 @@ switch (command) {
           : fail(`unknown dataset: ${dataset}`);
     const limit = option("limit") === undefined ? undefined : Number(option("limit"));
     const mode = option("mode") ?? "row";
-    if (mode !== "row" && mode !== "whole") fail("--mode must be row or whole");
+    if (mode !== "row" && mode !== "whole" && mode !== "document") fail("--mode must be row, whole or document");
     const provider = (option("provider") ?? "anthropic") as ProviderId;
     if (!EVAL_PROVIDERS.includes(provider)) fail(`--provider must be one of ${EVAL_PROVIDERS.join(", ")}`);
     // Only Claude has a default until the sweep picks one per provider (SPEC §5.6).

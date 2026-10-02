@@ -4,7 +4,7 @@
 
 import type { Usage } from "@crochet-model/core";
 import type { Effort, ModelInfo, ProviderId } from "./model.ts";
-import { systemPrompt } from "./prompt.ts";
+import { documentSystemPrompt, systemPrompt } from "./prompt.ts";
 
 type Price = NonNullable<ModelInfo["price"]>;
 
@@ -60,4 +60,21 @@ export function estimatePattern(english: string, rows: number, effort: Effort, p
     outputTokens: requests * OUTPUT_TOKENS[effort],
   };
   return { dollars: costOf(price, usage, false), requests: Math.round(requests), usage };
+}
+
+/**
+ * The same for document mode: one request for the whole pattern, with half
+ * again for repairs, each sending the system prompt and the pattern and
+ * writing every row's CrochetPARADE (about 30 tokens a row) after its thinking.
+ */
+export function estimateDocument(english: string, rows: number, effort: Effort, price: Price | undefined): { dollars?: number; requests: number; usage: Usage } {
+  const systemTokens = documentSystemPrompt().length / 3.5;
+  const requests = 1.5;
+  const usage: Usage = {
+    cacheWriteTokens: systemTokens,
+    cacheReadTokens: (requests - 1) * systemTokens,
+    inputTokens: requests * (english.length / 3.5 + 100),
+    outputTokens: requests * (OUTPUT_TOKENS[effort] * 2 + 30 * Math.max(1, rows)),
+  };
+  return { dollars: costOf(price, usage, false), requests: 2, usage };
 }

@@ -2,7 +2,7 @@
 // terms, choose provider, key and model, then translate.
 
 import { useEffect, useMemo, useState } from "react";
-import { api, ApiError, describeError, KEY_PAGES, PROVIDER_NAMES, type Effort, type OfferedModel, type ProviderId } from "../api.ts";
+import { api, ApiError, describeError, KEY_PAGES, PROVIDER_NAMES, type Effort, type OfferedModel, type ProviderId, type TranslateMode } from "../api.ts";
 import { SAMPLES } from "../samples.ts";
 import {
   chooseProvider,
@@ -15,6 +15,7 @@ import {
   savedKeyFor,
   setEnglish,
   setGuestKey,
+  setMode,
   setTranslationSettings,
   translateAll,
   useApp,
@@ -55,12 +56,12 @@ export function PatternInput({ onSignIn, onReview }: { onSignIn: () => void; onR
     if (!state.model || rows === 0) return setEstimate(undefined);
     const timer = setTimeout(() => {
       api
-        .estimate({ english, provider: state.provider, model: state.model!, effort: state.effort, price })
+        .estimate({ english, provider: state.provider, model: state.model!, effort: state.effort, mode: state.mode, price })
         .then((e) => setEstimate(e))
         .catch(() => setEstimate(undefined));
     }, 400);
     return () => clearTimeout(timer);
-  }, [english, state.provider, state.model, state.effort, price, rows]);
+  }, [english, state.provider, state.model, state.effort, state.mode, price, rows]);
 
   const go = (checked: { privacy?: boolean; cost?: boolean } = {}) => {
     if (!checked.privacy && !state.confirmedProviders.includes(state.provider)) return setConfirm("privacy");
@@ -330,6 +331,18 @@ function ModelPicker({ models, setModels, onSignIn }: { models: OfferedModel[]; 
             {EFFORTS.map((e) => (
               <option key={e}>{e}</option>
             ))}
+          </select>
+        </label>
+
+        <label className="field">
+          <span>Translate</span>
+          <select
+            value={s.mode}
+            title="Row by row sends one request per row. Whole pattern sends the pattern in one request and splits the answer into rows."
+            onChange={(e) => setMode(e.target.value as TranslateMode)}
+          >
+            <option value="row">Row by row</option>
+            <option value="document">Whole pattern</option>
           </select>
         </label>
       </div>
