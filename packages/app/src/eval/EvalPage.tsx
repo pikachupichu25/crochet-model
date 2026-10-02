@@ -4,12 +4,14 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { RunInfo, View, ViewItem } from "../../../eval/src/viewer.ts";
+import type { ItemScore } from "../../../eval/src/score.ts";
 import type { Summary } from "../../../eval/src/summary.ts";
+import { CpModel, earlierCp, guessCpDimension } from "../datasets/CpModel.tsx";
 import { YarnMark } from "../ui/App.tsx";
 
-type Status = "exact" | "partial" | "parses" | "no-parse" | "empty" | "incomplete" | "skipped";
+export type Status = "exact" | "partial" | "parses" | "no-parse" | "empty" | "incomplete" | "skipped";
 
-const STATUSES: { id: Status; label: string; tone: string; help: string }[] = [
+export const STATUSES: { id: Status; label: string; tone: string; help: string }[] = [
   { id: "exact", label: "Exact", tone: "ok", help: "Same stitches, worked into the same places, as the gold" },
   { id: "partial", label: "Partial", tone: "warn", help: "Parses, but the structure differs from the gold" },
   { id: "parses", label: "Parses", tone: "ok", help: "Parses; no gold to compare with" },
@@ -18,12 +20,15 @@ const STATUSES: { id: Status; label: string; tone: string; help: string }[] = [
   { id: "incomplete", label: "Request failed", tone: "faint", help: "A request failed (a rate limit, say); left out of the scores" },
   { id: "skipped", label: "Gold broken", tone: "faint", help: "The gold does not parse, so the item is not scored" },
 ];
-const STATUS = Object.fromEntries(STATUSES.map((s) => [s.id, s])) as Record<Status, (typeof STATUSES)[number]>;
+export const STATUS = Object.fromEntries(STATUSES.map((s) => [s.id, s])) as Record<Status, (typeof STATUSES)[number]>;
 
 function statusOf(item: ViewItem, output: string): Status {
-  if (item.gold?.ok === false) return "skipped";
-  if (item.incomplete) return "incomplete";
-  const s = item.scores[output];
+  return scoreStatus(item.gold?.ok, item.incomplete, item.scores[output]);
+}
+
+export function scoreStatus(goldOk: boolean | undefined, incomplete: boolean, s: ItemScore | undefined): Status {
+  if (goldOk === false) return "skipped";
+  if (incomplete) return "incomplete";
   if (!s?.nonEmpty) return "empty";
   if (!s.parses) return "no-parse";
   if (s.structure) return s.structure.exact ? "exact" : "partial";
@@ -31,10 +36,10 @@ function statusOf(item: ViewItem, output: string): Status {
 }
 
 const pct = (x: number | undefined) => (x === undefined ? "–" : `${(100 * x).toFixed(1)}%`);
-const when = (name: string) => name.replace(/^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2}).*/, "$1-$2-$3 $4:$5");
+export const when = (name: string) => name.replace(/^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2}).*/, "$1-$2-$3 $4:$5");
 const modelOf = (r: RunInfo) => (r.llm ? `${r.llm.model} · ${r.llm.effort}` : r.translator);
 
-async function getJson<T>(url: string): Promise<T> {
+export async function getJson<T>(url: string): Promise<T> {
   const res = await fetch(url);
   const body = await res.json();
   if (!res.ok) throw new Error(body.error ?? res.statusText);
@@ -134,6 +139,7 @@ export function EvalPage() {
         </a>
         <p className="tagline">Evaluation results</p>
         <nav className="account">
+          <a href="/datasets.html">Datasets</a>
           <a href="/">Back to the app</a>
         </nav>
       </header>
@@ -318,6 +324,37 @@ function Scores({ view }: { view: View }) {
   );
 }
 
+// --- Models -------------------------------------------------------------------
+
+/**
+ * The output's model beside the gold's. A step item's output is drawn after
+ * its earlier steps, as the scorer parses it, beside the earlier steps alone.
+ */
+function Models({ item, output }: { item: ViewItem; output: string }) {
+  const gold = item.item?.gold;
+  const earlier = earlierCp(item.item?.context);
+  const code = codeLines(output).length ? output : "";
+  const reference = gold?.trim() ? { label: "Gold", cp: gold } : earlier ? { label: "Earlier steps", cp: earlier } : undefined;
+  const result = code ? { label: earlier ? "Earlier steps + output" : "Output", cp: earlier ? `${earlier}\n${code}` : code } : undefined;
+  if (!reference && !result) return null;
+  const dimension = guessCpDimension(reference?.cp ?? result!.cp);
+  const models = [reference, result].filter((m): m is { label: string; cp: string } => !!m);
+  return (
+    <section className="models">
+      <h3 className="eyebrow">Models</h3>
+      <div className={`compare ${models.length === 2 ? "two-even" : "one"}`}>
+        {models.map((m) => (
+          <div key={m.label}>
+            <h4 className="model-label">{m.label}</h4>
+            <CpModel cp={m.cp} autoDimension={dimension} />
+          </div>
+        ))}
+      </div>
+      {!result && <p className="hint">No output to draw.</p>}
+    </section>
+  );
+}
+
 // --- Items --------------------------------------------------------------------
 
 function ItemList(props: {
@@ -363,7 +400,7 @@ function ItemList(props: {
  * The dataset's photo of the finished project, loaded from the publisher's
  * site (never copied here). No referrer is sent; a link that fails is hidden.
  */
-function Photo({ url, name }: { url: string; name: string }) {
+export function Photo({ url, name }: { url: string; name: string }) {
   const [failed, setFailed] = useState(false);
   if (failed) return null;
   return (
@@ -491,6 +528,8 @@ function ItemDetail({ item, output, suspect }: { item: ViewItem; output: string;
         </div>
       </div>
       {gold !== undefined && <p className="hint">Highlighted output lines differ from the gold line in the same place (spaces ignored). Different text can still be the same structure.</p>}
+
+      <Models item={item} output={out} />
 
       {item.llm && item.llm.translations.length > 0 && (
         <section className="rows">

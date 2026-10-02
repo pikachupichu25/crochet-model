@@ -3,11 +3,33 @@
 
 import { readFileSync } from "node:fs";
 import { statedCount } from "@crochet-model/core";
-import { dataPath } from "./sources.ts";
+import { dataPath, type SourceName } from "./sources.ts";
 
 export type DatasetName = "stitchswitch" | "crochetbench-step" | "crochetbench-project";
 
 export const DATASETS: DatasetName[] = ["stitchswitch", "crochetbench-step", "crochetbench-project"];
+
+/** Where each dataset comes from, for people reading it (README, SPEC §7.1). */
+export const DATASET_INFO: Record<DatasetName, { source: SourceName; title: string; paper: string; about: string }> = {
+  stitchswitch: {
+    source: "stitchswitch",
+    title: "StitchSwitch",
+    paper: "https://ojs.aaai.org/index.php/AAAI-SS/article/view/36054",
+    about: "Short patterns with CrochetPARADE translated by hand: the only set with a gold answer for every item.",
+  },
+  "crochetbench-step": {
+    source: "crochetbench",
+    title: "CrochetBench Task D-step",
+    paper: "https://arxiv.org/abs/2511.09483",
+    about: "One step of a pattern to translate, with the earlier steps and their CrochetPARADE as context. No gold for the target.",
+  },
+  "crochetbench-project": {
+    source: "crochetbench",
+    title: "CrochetBench Task D-proj",
+    paper: "https://arxiv.org/abs/2511.09483",
+    about: "Whole patterns, no gold. Scored on parse rate and stated stitch counts.",
+  },
+};
 
 export interface EvalItem {
   dataset: DatasetName;

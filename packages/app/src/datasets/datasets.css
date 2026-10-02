@@ -1,0 +1,11 @@
+/* The datasets page: the eval page's layout (eval.css), plus item tags and
+   rows for datasets that are not downloaded. */
+
+.datasets tbody tr.missing { cursor: default; color: var(--muted); }
+.datasets tbody tr.missing:hover { background: none; }
+.datasets a { color: inherit; }
+.datasets td.faint { white-space: normal; min-width: 180px; }
+.item-meta.tags { font-size: 12px; color: var(--muted); flex-wrap: wrap; }
+.item-meta.tags > span:not(.flag) { border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; }
+
+.cp-model .viewport { height: 440px; }

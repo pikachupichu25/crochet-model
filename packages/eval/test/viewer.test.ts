@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { ItemRecord } from "../src/run.ts";
-import { buildView, isIncomplete, listRuns } from "../src/viewer.ts";
+import { buildDatasetView, buildView, isIncomplete, listRuns } from "../src/viewer.ts";
 
 const OUT = "openrouter m medium row";
 
@@ -91,5 +91,11 @@ describe("eval viewer", () => {
     writeRun(dir, "20261001-a", [record("ss-001")]);
     writeRun(dir, "20261001-b", [record("step-001")], "crochetbench-step");
     expect(() => buildView(["20261001-a", "20261001-b"], undefined, dir)).toThrow(/share a dataset/);
+  });
+});
+
+describe("dataset viewer", () => {
+  it("refuses an unknown dataset", () => {
+    expect(() => buildDatasetView("nope", mkdtempSync(join(tmpdir(), "runs-")))).toThrow(/no dataset named/);
   });
 });

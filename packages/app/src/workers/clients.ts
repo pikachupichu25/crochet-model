@@ -114,6 +114,12 @@ export class LayoutClient {
     return { promise, cancel: () => this.current?.id === id && this.cancel() };
   }
 
+  /** Cancels any running layout and frees the worker. */
+  dispose(): void {
+    this.cancel();
+    this.retire();
+  }
+
   cancel(): void {
     if (!this.current) return;
     this.retire();
