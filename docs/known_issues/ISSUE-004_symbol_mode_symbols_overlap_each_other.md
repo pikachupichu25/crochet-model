@@ -1,8 +1,8 @@
 # ISSUE-004: Symbol mode symbols overlap each other
 
-**Issue status:** open
+**Issue status:** closed
 
-**Fix status:** not_started
+**Fix status:** fixed
 
 ---
 
@@ -20,7 +20,11 @@ Scope: the symbol geometry in `packages/core/src/symbols/` (`draw.ts`, `glyphs.t
 node --experimental-strip-types --no-warnings packages/core/scripts/symbol-overlap.ts
 ```
 
-It lays out the samples and several bundled examples, finds every pair of symbols whose strokes come closer than one line width (0.06 units), sets aside the conventional contacts above, and counts the rest by cause. After the fix, a unit test in `packages/core/test/symbols.test.ts` should assert the real-overlap share on the granny, disc, ball and `Square` patterns stays below a threshold.
+It lays out the samples and several bundled examples (with the fold check, as the app does), finds every pair of symbols whose strokes come closer than one line width (0.06 units), sets aside the conventional contacts above, and counts the rest by cause. Add `--unfitted` to measure the drawing before the fix. The regression test:
+
+```bash
+npx vitest run packages/core/test/symbols.test.ts -t "keep clear"
+```
 
 ## Issue Analysis
 
@@ -60,3 +64,19 @@ Smallest changes first, each measured with the script:
 4. **Fit symbols to the space they have** (cause 4): scale a symbol's width (the `×`, the bar, the slashes, the oval's length) down to fit the distance to its nearest neighbouring top, with a floor (about 60%) so symbols stay legible. A stitch squeezed below the floor still overlaps, as the layout forces.
 5. **Slip-stitch dots** (cause 5): draw them smaller, or nudge them off the node toward their own leg.
 6. Update SYM-FR-3.9 and docs/symbol/SPEC.md §4.4 with the new rules, add the overlap test, and re-check the samples in the browser.
+
+## Fix (2026-10-03)
+
+Done, as proposed, plus two causes found on the way. Details in docs/symbol/SPEC.md §4.7; SYM-FR-3.9 now forbids overlaps and lets the renderer move and shrink symbols, never the layout.
+
+- Legs clear the chain ovals they start from (`clipAtOval` in `draw.ts`, `Leg.clear` in `legs.ts`), then step further up if their `×` or loop mark still reaches in. This fixed causes 1 and 2.
+- An increase's `×` moves up its arm. The first formula treated each `×` as upright; it turns with its arm and reaches `w cos θ/2 + h sin θ/2` sideways, which needed correcting.
+- Crowded symbols shrink to at most 60% (`fitSymbols` in `scene.ts`, with `OverlapIndex` in `overlap.ts`); those still stuck try other places for an `sc`'s `×` or a slip-stitch dot.
+- Found on the way: a plain `ring` puts the ring node next to round 1's first stitch, so the ring circle covered round 2. The ring now sits at the centre of round 1 (`legs.ts`).
+- The measuring script now uses each dot's real radius; it had assumed the unshrunk one.
+
+Measured after the fix (share of symbols in a real overlap, before → after): swatch 1% → 0%, granny 60% → 0%, disc 60% → 0%, ball 21% → 0%, `Square` 42% → 1%, `Flower2` 57% → 1%, `Swatch2` 3% → 0%, `Edging` 30% → 0%. The remaining pairs (2 in `Square`, 1 in `Flower2`) are where the solver puts a stitch's top within about 0.3 units of a neighbouring symbol, closer than 60% symbols fit.
+
+Speed: building the `textHat` scene (4,646 stitches) takes 90 ms warm in Node, inside SYM-NFR-1.
+
+The conformance test's `textEarth` now has a 30 s timeout: it parses in about 2 s alone but went past 10 s while the new overlap tests ran in parallel.

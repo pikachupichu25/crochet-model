@@ -4,14 +4,18 @@
 // by cause. Conventional contact (an increase fan meeting at its foot, a
 // stitch standing on the top of the one below) is counted separately.
 //
-//   node --experimental-strip-types --no-warnings packages/core/scripts/symbol-overlap.ts
+//   node --experimental-strip-types --no-warnings packages/core/scripts/symbol-overlap.ts [--unfitted]
+//
+// --unfitted measures symbols as drawn before ISSUE-004's fitting.
 
 import { createNodeValidator, bundledExamples } from "../src/node.ts";
 import { createNodeSolver } from "../src/cp/nodeSolver.ts";
+import { layoutUnfolded } from "../src/cp/fold.ts";
 import { parseStitchGraph } from "../src/cp/graph.ts";
 import { applyObjectTransforms, readObjectTransforms } from "../src/cp/objectTransform.ts";
 import { placeStitches, yarnUnit, type StitchPlacement } from "../src/symbols/legs.ts";
 import { drawPlacement } from "../src/symbols/draw.ts";
+import { buildSymbolScene } from "../src/symbols/scene.ts";
 import { glyphFor, type LegPoint, type Stroke } from "../src/symbols/glyphs.ts";
 import { distance, sub, dot, add, scale, type Vec3 } from "../src/symbols/vec.ts";
 
@@ -29,7 +33,7 @@ const CASES: [string, string, 2 | 3][] = [
   ["Square", ex.textSquare!, 2], ["Flower2", ex.textFlower2!, 2], ["Swatch2", ex.textSwatch2!, 2], ["Edging", ex.textEdging!, 2],
 ];
 
-type Seg = { a: Vec3; b: Vec3; glyph: number; part: string };
+type Seg = { a: Vec3; b: Vec3; glyph: number; part: string; r: number };
 function segDist(p1: Vec3, q1: Vec3, p2: Vec3, q2: Vec3): number {
   const d1 = sub(q1, p1), d2 = sub(q2, p2), r = sub(p1, p2);
   const a = dot(d1, d1), e = dot(d2, d2), f = dot(d2, r);
@@ -64,16 +68,19 @@ for (const [name, text, dim] of CASES) {
   const r = v.validate(text, { dimension: dim });
   if (!r.ok) { console.log(name, "parse error", r.error?.message); continue; }
   const g = parseStitchGraph(r.graphJson!);
-  const L = solver.layout(r.simpleDot!);
+  // As the app lays out: a folded 2D layout overlaps itself, whatever the symbols do.
+  const L = layoutUnfolded(solver, r.simpleDot!);
   const pos = dim === 3 ? applyObjectTransforms(g, L.positions, readObjectTransforms(text)) : L.positions;
   const u = yarnUnit(g, pos);
   const ps = placeStitches(g, pos, u, dim);
   const segs: Seg[] = [];
+  const scene = buildSymbolScene(g, pos, dim, { colorMode: "ink" });
+  const unfitted = process.argv.includes("--unfitted");
   ps.forEach((p, i) => {
-    const d = drawPlacement(p, u, dim === 3 ? 0.15 * u : 0);
+    const d = unfitted ? drawPlacement(p, u, dim === 3 ? 0.15 * u : 0) : scene.glyphs[i]!;
     const lab = labels(p);
-    d.lines.forEach((line, k) => { for (let j = 1; j < line.length; j++) segs.push({ a: line[j - 1]!, b: line[j]!, glyph: i, part: lab[k] ?? "?" }); });
-    d.dots.forEach((dd) => segs.push({ a: dd.at, b: dd.at, glyph: i, part: "dot" }));
+    d.lines.forEach((line, k) => { for (let j = 1; j < line.length; j++) segs.push({ a: line[j - 1]!, b: line[j]!, glyph: i, part: lab[k] ?? "?", r: 0 }); });
+    d.dots.forEach((dd) => segs.push({ a: dd.at, b: dd.at, glyph: i, part: "dot", r: dd.radius }));
   });
   const width = 0.06 * u;
   const near = 0.15 * u;
@@ -86,7 +93,7 @@ for (const [name, text, dim] of CASES) {
   for (let x = 0; x < segs.length; x++) for (let y = x + 1; y < segs.length; y++) {
     const s = segs[x]!, t = segs[y]!;
     if (s.glyph === t.glyph) continue;
-    const extra = (s.part === "dot" ? 0.12 * u : 0) + (t.part === "dot" ? 0.12 * u : 0);
+    const extra = s.r + t.r;
     if (segDist(s.a, s.b, t.a, t.b) > width + extra) continue;
     const [i, j] = s.glyph < t.glyph ? [s.glyph, t.glyph] : [t.glyph, s.glyph];
     const P = ps[i]!, Q = ps[j]!;

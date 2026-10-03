@@ -15,6 +15,8 @@ export interface LegPoint {
   u: number;
   v: number;
   dv?: number;
+  /** v follows the stitch's mid point instead (0.5 unless an increase moves it up its arm). */
+  mid?: true;
 }
 export type TopPoint = [u: number, v: number];
 
@@ -44,6 +46,9 @@ export interface Glyph {
 
 /** Half-width of a symbol, in units. */
 export const HALF_WIDTH = 0.35;
+/** Half-width and half-height of the × of a single crochet, in units. */
+export const CROSS_HALF_WIDTH = HALF_WIDTH * 0.8;
+export const CROSS_HALF_HEIGHT = 0.25;
 export const RING_RADIUS = 0.5;
 
 const SLASHES: Partial<Record<BaseStitch, number>> = { dc: 1, tr: 2, dtr: 3, trtr: 4 };
@@ -53,13 +58,13 @@ const empty = (): Glyph => ({ leg: [], joinLeg: [], top: [], dots: [] });
 const POST: Stroke<LegPoint> = { kind: "line", from: { u: 0, v: 0 }, to: { u: 0, v: 1 } };
 const BAR: Stroke<TopPoint> = { kind: "line", from: [-HALF_WIDTH, 0], to: [HALF_WIDTH, 0] };
 
-/** The × of a single crochet, centred on the middle of the leg. */
+/** The × of a single crochet, centred on the leg's mid point. */
 function cross(): Stroke<LegPoint>[] {
-  const w = HALF_WIDTH * 0.8;
-  const h = 0.25;
+  const w = CROSS_HALF_WIDTH;
+  const h = CROSS_HALF_HEIGHT;
   return [
-    { kind: "line", from: { u: -w, v: 0.5, dv: -h }, to: { u: w, v: 0.5, dv: h } },
-    { kind: "line", from: { u: -w, v: 0.5, dv: h }, to: { u: w, v: 0.5, dv: -h } },
+    { kind: "line", from: { u: -w, v: 0.5, dv: -h, mid: true }, to: { u: w, v: 0.5, dv: h, mid: true } },
+    { kind: "line", from: { u: -w, v: 0.5, dv: h, mid: true }, to: { u: w, v: 0.5, dv: -h, mid: true } },
   ];
 }
 
@@ -142,7 +147,7 @@ function buildGlyph(type: string): Glyph {
     case "sc": {
       // A decrease joins each leg's × to the shared top.
       g.leg.push(...cross());
-      g.joinLeg.push({ kind: "line", from: { u: 0, v: 0.5, dv: 0.25 }, to: { u: 0, v: 1 } });
+      g.joinLeg.push({ kind: "line", from: { u: 0, v: 0.5, dv: 0.25, mid: true }, to: { u: 0, v: 1 } });
       break;
     }
     case "hdc":

@@ -144,7 +144,7 @@ export function legendIcon(key: string): LegendIcon {
     placements.push({
       stitch: stitch(t),
       top,
-      legs: feet.map((foot) => ({ footNode: "", foot, top, intoSpace: false, onRing: false })),
+      legs: feet.map((foot) => ({ footNode: "", foot, top, intoSpace: false, onRing: false, clear: [] })),
       frame: frameFor(top, feet, prev, next, 2),
     });
 

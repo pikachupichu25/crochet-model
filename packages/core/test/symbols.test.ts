@@ -3,10 +3,13 @@ import { parseStitchGraph, type StitchGraph } from "../src/cp/graph.ts";
 import { builtinStitches, bundledExamples, createNodeValidator } from "../src/cp/nodeParser.ts";
 import { createNodeSolver } from "../src/cp/nodeSolver.ts";
 import type { Solver } from "../src/cp/layout.ts";
+import { layoutUnfolded } from "../src/cp/fold.ts";
 import { glyphFor } from "../src/symbols/glyphs.ts";
 import { legendEntries, legendIcon, stitchName } from "../src/symbols/legend.ts";
 import { placeStitches, UNDRAWN_TYPES } from "../src/symbols/legs.ts";
 import { buildSymbolScene } from "../src/symbols/scene.ts";
+import { clipAtOval, drawPlacement } from "../src/symbols/draw.ts";
+import { findOverlaps } from "../src/symbols/overlap.ts";
 import { symbolSvg } from "../src/symbols/svg.ts";
 import { cross, distance, dot, mean, sub } from "../src/symbols/vec.ts";
 
@@ -129,19 +132,18 @@ describe("buildSymbolScene", () => {
   it("keeps a dc's bar and slash the same size when the stitch is stretched", () => {
     const { graph, positions } = laidOut("4ch,turn\nsk,3dc");
     const dc = graph.stitches.find((s) => s.row === 1 && s.index === 1)!;
-    // Lengths in units: moving a node can change the median yarn edge.
-    const scene = (p: Record<string, number[]>) => {
-      const s = buildSymbolScene(graph, p, 2, { colorMode: "ink" });
-      const glyph = s.glyphs.find((g) => g.stitchId === dc.id)!;
-      return glyph.lines.filter((l) => l.length === 2).map(([a, b]) => distance(a!, b!) / s.unit);
+    // The glyph alone, unfitted: fitting would shrink a symbol that now crosses others.
+    const draw = (p: Record<string, number[]>) => {
+      const placed = placeStitches(graph, p, 1, 2).find((x) => x.stitch.id === dc.id)!;
+      return drawPlacement(placed, 1).lines.filter((l) => l.length === 2).map(([a, b]) => distance(a!, b!));
     };
-    const before = scene(positions);
+    const before = draw(positions);
     // Pull the stitch's top a long way up.
     const [x, y] = positions[dc.id]!;
-    const after = scene({ ...positions, [dc.id]: [x!, y! + 5] });
+    const after = draw({ ...positions, [dc.id]: [x!, y! + 5] });
     const [postBefore, ...restBefore] = before;
     const [postAfter, ...restAfter] = after;
-    expect(postAfter!).toBeGreaterThan(postBefore! + 2);
+    expect(postAfter!).toBeGreaterThan(postBefore! + 4);
     restAfter.forEach((l, i) => expect(l).toBeCloseTo(restBefore[i]!, 6));
   });
 
@@ -311,5 +313,57 @@ describe("symbolSvg", () => {
     const { graph, positions } = laidOut("ring\n6sc", 3);
     const scene = buildSymbolScene(graph, positions, 3, { colorMode: "ink" });
     expect(() => symbolSvg(scene, { glyphColor: () => "#000", ink: "#000" })).toThrow(/2D/);
+  });
+});
+
+describe("symbols keep clear of each other (ISSUE-004)", () => {
+  const rep = (line: string, n: number) => Array.from({ length: n }, () => line).join("\n");
+  const GRANNY = [
+    "4ch.R,ss@[%,0]",
+    "3ch,2dc@R,2ch.A[0],3dc@R,2ch.A[1],3dc@R,2ch.A[2],3dc@R,2ch.A[3],ss@[%,2]",
+    "ss@A[0],3ch,2dc@A[0],2ch.B[0],3dc@A[0],ch.C[0],3dc@A[1],2ch.B[1],3dc@A[1],ch.C[1],3dc@A[2],2ch.B[2],3dc@A[2],ch.C[2],3dc@A[3],2ch.B[3],3dc@A[3],ch.C[3],ss@[%,3]",
+  ].join("\n");
+  const cases: [string, string, 2 | 3][] = [
+    ["granny", GRANNY, 2],
+    ["disc", "ring\n6sc\n6*sc2inc\n6*[sc,sc2inc]\n6*[2sc,sc2inc]\n6*[3sc,sc2inc]", 2],
+    ["ball", `ring.R\n6sc@R\n6*sc2inc\n6*[sc,sc2inc]\n6*[2sc,sc2inc]\n${rep("24sc", 4)}\n6*[2sc,sc2tog]\n6*[sc,sc2tog]\n6*sc2tog`, 3],
+    ["granny Square", bundledExamples().textSquare!, 2],
+  ];
+  for (const [name, text, dimension] of cases) {
+    it(`leaves at most 2% of symbols overlapping on the ${name}`, { timeout: 60_000 }, () => {
+      // Laid out as the app does: a folded 2D layout overlaps itself, whatever the symbols do.
+      const { graph, simpleDot } = graphOf(text, dimension);
+      const positions = layoutUnfolded(solver, simpleDot).positions;
+      const scene = buildSymbolScene(graph, positions, dimension, { colorMode: "ink" });
+      const placed = placeStitches(graph, positions, scene.unit, dimension);
+      // Overlaps are checked unlifted, where the shared nodes are.
+      const lift = dimension === 3 ? 0.15 * scene.unit : 0;
+      const drawn = scene.glyphs.map((g) => ({
+        lines: g.lines.map((l) => l.map((p) => sub(p, [g.out[0] * lift, g.out[1] * lift, g.out[2] * lift]))),
+        dots: g.dots.map((d) => ({ ...d, at: sub(d.at, [g.out[0] * lift, g.out[1] * lift, g.out[2] * lift]) })),
+      }));
+      const involved = new Set(findOverlaps(drawn, placed, positions, scene.unit).flat());
+      expect(involved.size / scene.glyphs.length).toBeLessThanOrEqual(0.02);
+    });
+  }
+
+  it("stops a leg worked into a chain at the chain's oval", () => {
+    const leg = { footNode: "c", foot: [0, 0, 0] as [number, number, number], top: [0, 2, 0] as [number, number, number], intoSpace: false, onRing: false, clear: ["c"] };
+    const oval = { centre: [0, 0, 0] as [number, number, number], along: [1, 0, 0] as [number, number, number], up: [0, 1, 0] as [number, number, number], rx: 0.42, ry: 0.18 };
+    expect(clipAtOval(leg, oval, 0.08).foot[1]).toBeCloseTo(0.26, 6);
+    // A leg that starts well clear is left alone.
+    expect(clipAtOval({ ...leg, foot: [0, 1, 0] }, oval, 0.08).foot).toEqual([0, 1, 0]);
+  });
+
+  it("moves an increase's crosses up their arms", () => {
+    const { graph, positions } = laidOut("ring\n6sc\n6*sc2inc", 2);
+    const scene = buildSymbolScene(graph, positions, 2, { colorMode: "ink" });
+    const placed = placeStitches(graph, positions, scene.unit, 2);
+    // The × of a round-2 sc sits above the middle of its leg.
+    const i = placed.findIndex((p) => p.stitch.row === 2);
+    const leg = placed[i]!.legs[0]!;
+    const crossCentre = mean(scene.glyphs[i]!.lines[0]!);
+    const along = dot(sub(crossCentre, leg.foot), sub(leg.top, leg.foot)) / dot(sub(leg.top, leg.foot), sub(leg.top, leg.foot));
+    expect(along).toBeGreaterThan(0.55);
   });
 });

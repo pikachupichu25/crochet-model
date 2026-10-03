@@ -14,6 +14,11 @@ export interface Leg {
   intoSpace: boolean;
   /** The foot is a magic ring: the symbol starts on the ring circle. */
   onRing: boolean;
+  /**
+   * Chains whose ovals the leg must stay clear of (ISSUE-004): the chain it
+   * is worked into, or the chains either side of its chain space.
+   */
+  clear: string[];
 }
 
 export interface StitchPlacement {
@@ -50,8 +55,15 @@ export function placeStitches(
   const byId = new Map(graph.stitches.map((s) => [s.id, s]));
 
   // Internal nodes placed by gray edges: the point inside a chain space.
-  const spaceNodes = new Set<string>();
-  for (const e of graph.edges) if (e.kind === "constraint") spaceNodes.add(e.head);
+  // ...and the stitches either side of each such point.
+  const spaceNodes = new Map<string, string[]>();
+  for (const e of graph.edges) {
+    if (e.kind !== "constraint") continue;
+    const tails = spaceNodes.get(e.head);
+    if (tails) tails.push(e.tail);
+    else spaceNodes.set(e.head, [e.tail]);
+  }
+  const isChain = (id: string) => byId.get(id)?.type === "ch";
 
   const ringOf = (stitch: Stitch, foot: Stitch): Stitch | undefined => {
     // Round 1 worked into a ring: CrochetPARADE may tie each stitch to the one
@@ -75,19 +87,31 @@ export function placeStitches(
       if (stitch.intoSpace) {
         const space = stitch.nodeIds.find((id) => spaceNodes.has(id) && at(id));
         const feet = space ? [at(space)!] : stitch.workedInto.map(at).filter((p) => p !== undefined);
-        if (feet.length) legs.push({ footNode: space ?? stitch.workedInto[0]!, foot: mean(feet), top, intoSpace: true, onRing: false });
+        const clear = (space ? spaceNodes.get(space)! : stitch.workedInto).filter(isChain);
+        if (feet.length) legs.push({ footNode: space ?? stitch.workedInto[0]!, foot: mean(feet), top, intoSpace: true, onRing: false, clear });
       } else {
         for (const id of stitch.workedInto) {
           const foot = byId.get(id);
           const ring = foot && ringOf(stitch, foot);
           const footNode = ring?.id ?? id;
           const p = at(footNode);
-          if (p) legs.push({ footNode, foot: p, top, intoSpace: false, onRing: !!ring });
+          if (p) legs.push({ footNode, foot: p, top, intoSpace: false, onRing: !!ring, clear: isChain(footNode) ? [footNode] : [] });
         }
       }
     }
     return { stitch, legs, top };
   });
+
+  // A magic ring sits at the centre of the round worked into it. CrochetPARADE
+  // may put the ring node next to the first stitch instead (a plain `ring`
+  // without a label), which would draw the ring over round 2.
+  for (const ring of raw.filter((r) => r.stitch.type === "ring")) {
+    const onIt = raw.flatMap((r) => r.legs.filter((l) => l.onRing && l.footNode === ring.stitch.id).map((l) => ({ r, l })));
+    if (onIt.length < 3) continue;
+    const centre = mean(onIt.map(({ r }) => r.top));
+    ring.top = centre;
+    for (const { l } of onIt) l.foot = centre;
+  }
 
   for (let i = 0; i < raw.length; i++) {
     const { stitch, legs, top } = raw[i]!;

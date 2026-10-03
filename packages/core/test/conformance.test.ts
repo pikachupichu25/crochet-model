@@ -19,6 +19,8 @@ const KNOWN_FAILURES: Record<string, string> = {
 // `npm run test:conformance`.
 const SLOW = new Set(["textDoily", "textChevron"]);
 const runSlow = process.env.CP_SLOW === "1";
+// About 2 s alone, but well past 10 s while other test files parse in parallel.
+const HEAVY = new Set(["textEarth"]);
 
 // Stitch types that need not be worked into anything.
 const FOUNDATION = new Set(["ch", "ring", "hidden"]);
@@ -33,7 +35,7 @@ describe("bundled CrochetPARADE examples", () => {
 
   for (const [name, text] of Object.entries(examples)) {
     const slow = SLOW.has(name);
-    it.skipIf(slow && !runSlow)(name, { timeout: slow ? 120_000 : 10_000 }, () => {
+    it.skipIf(slow && !runSlow)(name, { timeout: slow ? 120_000 : HEAVY.has(name) ? 30_000 : 10_000 }, () => {
       const result = validate(text);
       if (name in KNOWN_FAILURES) {
         expect(result.error?.kind).toBe(KNOWN_FAILURES[name]);

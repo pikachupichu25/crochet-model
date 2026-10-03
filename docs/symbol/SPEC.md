@@ -42,6 +42,7 @@ packages/core/src/symbols/
   scene.ts         buildSymbolScene(): legs + frames + glyphs → SymbolScene, with row labels and yarn path (§4.5)
   surface.ts       the 3D surface under the symbols (§5.4)
   legend.ts        legend keys (sc2inc, dc2tog, picot3), US names, counts, icons (§6.3)
+  overlap.ts       which symbols overlap, and an incremental index for fitting (§4.7)
   stitchTypes.ts   typeParts() and baseType(): base stitch and loop, post, reverse, spike affixes
   vec.ts           tuple vector helpers
   svg.ts           SymbolScene (2D) → SVG chart text (§7)
@@ -124,6 +125,8 @@ For each stitch, in this order:
 
 After step 4, a leg whose foot is a stitch in the **same row**, where following same-row feet backwards ends at a stitch worked into a `ring`, is moved to that ring: `footNode` is the ring, `onRing` is true. This catches every stitch of a round worked into a magic ring (§2), and nothing else: in every other case CrochetPARADE never works a stitch into one of the same row except through a label or `@[%,…]`, and those are not chains back to a ring. A test pins this on the samples and the bundled examples (§9).
 
+The ring is then moved to the centre of the round worked into it (the mean of those stitches' tops, when there are at least three), and their legs start there. A plain `ring` without a label puts the ring node next to the first stitch, which would draw the ring circle over round 2.
+
 ### 3.3 Degenerate legs
 
 A leg shorter than 0.25 × `unit` (§4.1), which happens when the solver squeezes a stitch, is lengthened to that along its direction, or along the stitch's `up` (§3.4) when foot and top coincide. The symbol stays readable; the hover tooltip still shows the real stitch.
@@ -194,10 +197,11 @@ The type is matched after stripping the loop, post, reverse and spike affixes (`
 
 ### 4.4 Placement rules
 
-- A leg with `onRing` starts at the ring circle: the foot is moved toward the top by the ring radius.
+- A leg with `onRing` starts just outside the ring circle: the foot is moved toward the top by the ring radius plus a gap of 0.08 units.
+- Legs, crosses and marks keep clear of the chains and the ring they start from, and crowded symbols shrink (§4.7).
 - A post stitch with several legs (`dc2tog`) draws the post and slashes on each leg and **one** bar at the top. A `sc` decrease draws one `×` per leg (table above).
 - Picots need no rule: their three `ch` ovals and the `ss` dot are drawn as such, and the `ss` sits on the stitch the picot closes on.
-- The `×` of an `sc` is placed at the middle of the leg, not at the top, as charts do. Its top node is still the hover and pick point.
+- The `×` of an `sc` is placed at the middle of the leg, not at the top, as charts do, except in an increase (§4.7). Its top node is still the hover and pick point.
 
 ### 4.5 The scene
 
@@ -238,6 +242,17 @@ Colour keys, not colours, are stored: the view and the SVG writer resolve them a
 ### 4.6 Loop, post and reverse marks
 
 For now each family has **one** mark: one arc for back and front loop, one hook for front and back post, and `rsc` drawn as `sc` (REQUIREMENTS §11, decision 4). `Stitch.side` is not used by the glyphs yet; the tooltip and legend still name the exact type. Telling the sides apart needs the CYC orientation of each mark checked first, and is tracked in [ISSUE-003](../known_issues/ISSUE-003_symbol_mode_loop_and_post_marks_not_told_apart.md). The glyph lookup keeps the side as an input so that fix touches only `glyphs.ts`.
+
+### 4.7 Keeping symbols apart
+
+ISSUE-004 measured symbols overlapping on 21–60% of stitches in the samples and bundled examples, mostly from symbol geometry, not the layout. `fitSymbols()` in `scene.ts` now gives each symbol a `Fit` (`draw.ts`) before it is drawn:
+
+1. **Legs clear their chains.** Each leg lists the chains it must clear (`Leg.clear`: the chain it is worked into, or the chains either side of its space). `clipAtOval()` moves the foot up the leg to where it leaves the chain's oval grown by 0.08 units. If the leg's `×` or loop mark still reaches into an oval (or the ring), the foot steps up 0.05 units at a time, keeping at least 0.35 units of leg.
+2. **An increase's `×` moves up its arm.** For an `sc` sharing its foot with the stitch before or after it, the `×` goes to where the two arms are its tilted width (`w cos θ/2 + h sin θ/2` each side) plus clearance and a 0.05-unit margin apart, but not past the top.
+3. **Crowded symbols shrink.** `OverlapIndex` (`overlap.ts`) finds pairs whose strokes come within 0.06 units (two half line widths), leaving out the two conventional contacts (SYM-FR-3.9). Each symbol in a pair shrinks by 15% (widths, the `×`, slashes, ovals, dots; never the leg length or the ring) until no pairs are left or it reaches 60%. Only changed symbols, and the legs that clear a changed chain, are redrawn and re-checked.
+4. **Stuck symbols move.** A symbol still overlapping at 60% tries other places for the parts that may move: an `sc`'s `×` at 0.65, 0.35, 0.75, 0.3 or 0.8 of its leg, or a slip-stitch dot 0.15–0.35 units off its node in four directions. The first place that touches nothing is kept.
+
+Result (layouts as the app makes them, with the fold check): 0% of symbols overlapping on the swatch, granny, disc and ball samples and on `Swatch2` and `Edging`, 1% on `Square` and `Flower2`. The rest is where the solver puts stitches closer than 60% symbols fit. `packages/core/scripts/symbol-overlap.ts` measures this, with `--unfitted` for the drawing before the fix.
 
 ## 5. Symbol view
 
@@ -341,7 +356,7 @@ A 3D scene is refused by `svg.ts` (SYM-FR-6.3); the app does not offer the butto
 
 ## 8. Performance
 
-Budget for 3,000 stitches (SYM-NFR-1): about 3,000 glyphs × up to 12 segments ≈ 36,000 segments in one `LineSegments2`, plus a few hundred dot instances and 3,000 hit quads. Building the scene is a linear pass over stitches and edges; the target is under 100 ms, measured in S1 on the `textHat` example (4,646 stitches) and the samples. If it is slower, the scene builder moves into the layout worker and returns typed arrays, as the yarn mesh builder is planned to (main SPEC §6.1).
+Budget for 3,000 stitches (SYM-NFR-1): about 3,000 glyphs × up to 12 segments ≈ 36,000 segments in one `LineSegments2`, plus a few hundred dot instances and 3,000 hit quads. The target is under 100 ms. With fitting (§4.7), measured in Node on 2026-10-03 with warm code: `textHat` (4,646 stitches, 3D) 90 ms, `Square` (482) 17 ms; a first, cold build takes about twice that. The overlap checks dominate; a grid of symbol boxes and a per-segment box test keep them near linear. If it gets slower, the scene builder moves into the layout worker and returns typed arrays, as the yarn mesh builder is planned to (main SPEC §6.1).
 
 ## 9. Testing
 
@@ -353,6 +368,7 @@ Unit tests in `packages/core/test/symbols.test.ts`, all in Node with the vendore
 - **Scene:** for a fixed graph and positions, a stretched `dc` keeps its bar width and slash angle (§4.1); `bounds` contains every point; a 2D scene has `z = 0` everywhere.
 - **3D:** on the ball, at least 97% of frames face away from the centre and of surface triangles face out; on a turned swatch laid out in 3D every stitch's `out` agrees with the stitches it is worked into; glyphs are lifted 0.15 units along `out`; 2D scenes have no surface.
 - **Overlays:** one row label per row; *Alternate rows* gives `row1`, `row0`, `row1`; the yarn path runs through every stitch of one piece and breaks at `start_anew`.
+- **Overlap (ISSUE-004):** at most 2% of symbols overlap on the granny, disc, ball and `Square` layouts (laid out with the fold check, as the app does); `clipAtOval` stops a leg at an oval's edge plus the gap and leaves a leg that starts clear alone; an increase's `×` sits above the middle of its leg. The stretch test draws one glyph without fitting, since fitting shrinks a symbol that a stretched neighbour crosses.
 - **Composite names:** the samples' legends list `sc2inc` and `sc2tog` with the counts the pattern states.
 - **SVG:** the granny square's SVG has balanced tags, one `<g id="s-…">` per drawn stitch, one legend entry per legend key, an escaped title, row labels and no `NaN`; a 3D scene is refused. Structural checks were chosen over a stored snapshot, which would break on any glyph tweak.
 

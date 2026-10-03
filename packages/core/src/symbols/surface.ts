@@ -46,8 +46,8 @@ export function buildSurface(placements: StitchPlacement[], positions: Record<st
       continue;
     }
     const top = vertex(p.stitch.id, p.top);
-    // Raw foot nodes: the ring's centre, not where its symbol is clipped.
-    const feet = p.legs.map((l) => vertex(l.footNode, l.foot));
+    // Foot nodes as laid out; a ring's legs meet at its centre (legs.ts), not at its node.
+    const feet = p.legs.map((l) => (l.onRing ? vertex(`ring:${l.footNode}`, l.foot) : vertex(l.footNode, l.foot)));
     const out = p.frame.out;
     // A decrease: a fan from its top over its feet.
     for (let k = 1; k < feet.length; k++) add(feet[k - 1]!, feet[k]!, top, out);
